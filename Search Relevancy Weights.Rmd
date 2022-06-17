@@ -1,0 +1,2347 @@
+---
+title: "Search Relevancy Weights"
+output: html_document
+date: Q42019
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Connect to Server}
+#Load Database -- needs to be done in 3.2.3
+library(nzr)
+nzConnect(machine='netezza.rei.com', database='DIGITAL_RETAIL_ANALYSIS', user='glowney', password='xxxx')
+
+# Disconnect
+#nzDisconnect()
+
+query_p=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE PURCHASE_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE PURCHASE_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+
+query_i=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE INTERACTION_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE INTERACTION_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_TOTAL WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+
+data_p=nzQuery(query_p)
+data_i=nzQuery(query_i)
+data_a=nzQuery(query_a)
+
+save(data_p,file="data_p.RData")
+save(data_i,file="data_i.RData")
+save(data_a,file="data_a.RData")
+
+
+```
+
+```{r Load NavCat data}
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_FOOTWEAR WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_FOOTWEAR WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+data_a=nzQuery(query_a)
+save(data_a,file="footwear_a.RData")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_BACKPACKS WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_BACKPACKS WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+backpacks_a=nzQuery(query_a)
+save(backpacks_a,file="backpacks_a.RData")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_SOCKS WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_SOCKS WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+socks_a=nzQuery(query_a)
+save(socks_a,file="socks_a.RData")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_TENTS WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_TENTS WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+tents_a=nzQuery(query_a)
+save(tents_a,file="tents_a.RData")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_WOMENS WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_WOMENS WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+womens_a=nzQuery(query_a)
+save(womens_a,file="womens_a.RData")
+
+query_a=paste0("(SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_MENS WHERE ATC_FLAG=1 ORDER BY RAND_NUM LIMIT 3000000) UNION ALL (SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_MENS WHERE ATC_FLAG=0 ORDER BY RAND_NUM LIMIT 3000000)")
+mens_a=nzQuery(query_a)
+save(mens_a,file="mens_a.RData")
+
+
+```
+
+```{r New Variables}
+backpacks_balanced_a$review_count_group=0
+backpacks_balanced_a$review_count_group=ifelse(backpacks_balanced_a$REVIEW_COUNT==0,"0", ifelse(backpacks_balanced_a$REVIEW_COUNT>0 & backpacks_balanced_a$REVIEW_COUNT<=4,"1-4", ifelse(backpacks_balanced_a$REVIEW_COUNT>=5 & backpacks_balanced_a$REVIEW_COUNT<=10,"5-10", ifelse(backpacks_balanced_a$REVIEW_COUNT>=11 & backpacks_balanced_a$REVIEW_COUNT<=20,"11-20",
+ifelse(backpacks_balanced_a$REVIEW_COUNT>=21 & backpacks_balanced_a$REVIEW_COUNT<=50,"21-50","over50")))))
+
+###
+backpacks_balanced_a$review_count_group=0
+backpacks_balanced_a$review_count_group=ifelse(backpacks_balanced_a$REVIEW_COUNT<76, backpacks_balanced_a$REVIEW_COUNT,"over75")
+
+backpacks_balanced_a$review_count_group=as.factor(backpacks_balanced_a$review_count_group)
+
+review_counts=as.data.frame(table(backpacks_balanced_a$review_count_group))
+plot(review_counts$Var1,review_counts$Freq)
+
+
+
+backpacks_balanced_a$review_score_group=0
+backpacks_balanced_a$review_score_group=ifelse(backpacks_balanced_a$REVIEW_SCORE==0,"0", ifelse(backpacks_balanced_a$REVIEW_SCORE>0 & backpacks_balanced_a$REVIEW_SCORE<3.5,"1-3.5", ifelse(backpacks_balanced_a$REVIEW_SCORE>=3.5 & backpacks_balanced_a$REVIEW_SCORE<4.5,"3.5-4.5",
+ifelse(backpacks_balanced_a$REVIEW_SCORE>=4.5 & backpacks_balanced_a$REVIEW_SCORE<6,"4.5-5","empty"))))
+
+backpacks_balanced_a$review_score_group=as.factor(backpacks_balanced_a$review_score_group)
+
+review_counts=as.data.frame(table(backpacks_balanced_a$review_score_group))
+plot(review_counts$Var1,review_counts$Freq)
+
+```
+
+
+```{r EXPLORATORY: Check Data Vars}
+### prediction vars
+purchase_flag=nzQuery(
+          "SELECT PURCHASE_FLAG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+#   PURCHASE_FLAG    COUNT
+# 1             0 60,829,263
+# 2             1  2,250,499
+
+
+atc_flag=nzQuery(
+          "SELECT ATC_FLAG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+#   ATC_FLAG    COUNT
+# 1        0 56,902,131
+# 2        1  6,177,631
+
+interaction_flag=nzQuery(
+          "SELECT INTERACTION_FLAG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+#   INTERACTION_FLAG    COUNT
+# 1                0 46,989,714
+# 2                1 16,090,048
+
+### date fields
+date_key=nzQuery(
+          "SELECT DATE_KEY,EVENT_FLAG, count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+date_key=date_key[order(date_key$DATE_KEY),]
+date_key$date=as.Date(as.character(date_key$DATE_KEY),"%Y%m%d")
+date_key$COUNT=as.integer(date_key$COUNT)
+plot(x=date_key$date,y=date_key$COUNT,type = "l", ylab="Obs Count", xlab="PDP View Date")
+events=date_key[which(date_key$EVENT_FLAG==1),]
+points(x=events$date,y=events$COUNT,type = "p", col="red")
+
+date_name=nzQuery(
+          "SELECT FISCAL_DAY_NAME,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+week_order=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+require("dplyr")
+week_name=date_name %>%
+  mutate(FISCAL_DAY_NAME =  factor(trimws(FISCAL_DAY_NAME), levels = week_order)) %>%
+  arrange(FISCAL_DAY_NAME)    
+plot(as.factor(week_name$FISCAL_DAY_NAME),as.integer(week_name$COUNT))
+
+weekday_bucket=nzQuery(
+          "SELECT WEEKDAY_BUCKET,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+week_bucket=c("Monday", "Midweek", "Weekend")
+require("dplyr")
+weekbucket_name=weekday_bucket %>%
+  mutate(WEEKDAY_BUCKET =  factor(trimws(WEEKDAY_BUCKET), levels = week_bucket)) %>%
+  arrange(WEEKDAY_BUCKET)    
+plot(as.factor(weekbucket_name$WEEKDAY_BUCKET),as.integer(weekbucket_name$COUNT))
+
+
+event_flag=nzQuery(
+          "SELECT EVENT_FLAG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+### State
+state=nzQuery(
+          "SELECT STATE_NAME,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+state$COUNT=as.integer(state$COUNT)
+state$STATE_NAME=as.factor(state$STATE_NAME)
+state=state[order(state$COUNT,decreasing =T),]
+require(data.table)
+max_states=state[which(state$STATE_NAME %in% head(state, 5)$STATE_NAME),]
+plot(state$STATE_NAME,state$COUNT)
+text(x=max_states$STATE_NAME, y=(max_states$COUNT-500000), col="green4", labels=max_states$STATE_NAME)
+
+
+district=nzQuery(
+          "SELECT DISTRICT_NAME,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+district$COUNT=as.integer(district$COUNT)
+district$DISTRICT_NAME=as.factor(district$DISTRICT_NAME)
+district=district[order(district$COUNT,decreasing =T),]
+require(data.table)
+max_district=district[which(district$DISTRICT_NAME %in% head(district, 3)$DISTRICT_NAME),]
+plot(district$DISTRICT_NAME,district$COUNT)
+text(x=max_district$DISTRICT_NAME, y=(max_district$COUNT-500000), col="green4", labels=max_district$DISTRICT_NAME)
+
+### Product
+product=nzQuery(
+          "SELECT PRODUCT,PRICE_BAND,PRODUCT_NAME, count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2,3"
+)
+product$PRODUCT=as.factor(product$PRODUCT)
+product$COUNT=as.integer(product$COUNT)
+
+bands=unique(na.omit(product$PRICE_BAND))
+
+for(i in 1:length(bands)){
+  band=bands[i]
+  productXband=product[which(product$PRICE_BAND==band),]
+  print(band)
+  print(mean(productXband$COUNT))
+  print(median(productXband$COUNT))
+  productXband=productXband[order(productXband$COUNT, decreasing=T),]
+  max_products=head(productXband, 3)
+  plot(productXband$PRODUCT,productXband$COUNT, main=paste0(band))
+  text(x=max_products$PRODUCT, y=(max_products$COUNT-100), col="magenta",cex=.75, label=max_products$PRODUCT_NAME)
+  
+}
+
+
+price_band=nzQuery(
+          "SELECT PRICE_BAND,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+price_band_Data$PRICE_BAND=as.factor(price_band_Data$PRICE_BAND)
+price_band_Data$COUNT=as.integer(price_band_Data$COUNT)
+plot(price_band_Data$PRICE_BAND,price_band_Data$COUNT)
+
+brand=nzQuery(
+          "SELECT BRAND_CAT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+brand$BRAND_CAT=as.factor(brand$BRAND_CAT)
+brand$BRAND_CLEAN=apply(brand[,"BRAND_CAT",drop=F],1 ,function(x) gsub("\\(.+", "", x))
+brand$COUNT=as.integer(brand$COUNT)
+plot(x=brand$BRAND_CAT, y=brand$COUNT, type="h", ylim=c(0,40000000))
+text(x=brand$BRAND_CAT, y=(brand$COUNT+3000000), col="dodgerblue2", labels=brand$BRAND_CLEAN)
+
+
+sku_count=nzQuery(
+          "SELECT TOTAL_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+sku_count$TOTAL_SKU_COUNT=as.integer(sku_count$TOTAL_SKU_COUNT)
+sku_count$COUNT=as.integer(sku_count$COUNT)
+sku_count=sku_count[order(sku_count$COUNT, decreasing=T),]
+plot(sku_count$TOTAL_SKU_COUNT,sku_count$COUNT, xlab="Total Sku Count", ylab="Obs Count")
+
+sale_sku_count=nzQuery(
+          "SELECT SALE_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+sale_sku_count$SALE_SKU_COUNT=as.integer(sale_sku_count$SALE_SKU_COUNT)
+sale_sku_count$COUNT=as.integer(sale_sku_count$COUNT)
+sale_sku_count=sale_sku_count[order(sale_sku_count$COUNT, decreasing=T),]
+plot(sale_sku_count$SALE_SKU_COUNT,sale_sku_count$COUNT, xlab="Sale Sku Count", ylab="Obs Count")
+
+clearance_sku_count=nzQuery(
+          "SELECT CLEARANCE_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+clearance_sku_count$CLEARANCE_SKU_COUNT=as.integer(clearance_sku_count$CLEARANCE_SKU_COUNT)
+clearance_sku_count$COUNT=as.integer(clearance_sku_count$COUNT)
+clearance_sku_count=clearance_sku_count[order(clearance_sku_count$COUNT, decreasing=T),]
+plot(clearance_sku_count$CLEARANCE_SKU_COUNT,clearance_sku_count$COUNT, xlab="clearance Sku Count", ylab="Obs Count")
+
+super_clear_sku_count=nzQuery(
+          "SELECT SUPER_CLEARANCE_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+super_clear_sku_count$SUPER_CLEARANCE_SKU_COUNT=as.integer(super_clear_sku_count$SUPER_CLEARANCE_SKU_COUNT)
+super_clear_sku_count$COUNT=as.integer(super_clear_sku_count$COUNT)
+super_clear_sku_count=super_clear_sku_count[order(super_clear_sku_count$COUNT, decreasing=T),]
+plot(super_clear_sku_count$SUPER_CLEARANCE_SKU_COUNT,super_clear_sku_count$COUNT, xlab="Super clearance Sku Count", ylab="Obs Count")
+
+outlet_sku_count=nzQuery(
+          "SELECT OUTLET_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+regular_sku_count=nzQuery(
+          "SELECT REGULAR_SKU_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+regular_sku_count$REGULAR_SKU_COUNT=as.integer(regular_sku_count$REGULAR_SKU_COUNT)
+regular_sku_count$COUNT=as.integer(regular_sku_count$COUNT)
+regular_sku_count=regular_sku_count[order(regular_sku_count$COUNT, decreasing=T),]
+plot(regular_sku_count$REGULAR_SKU_COUNT,regular_sku_count$COUNT, xlab="Regular Sku Count", ylab="Obs Count")
+
+
+size_count=nzQuery(
+          "SELECT SIZE_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+size_count180=nzQuery(
+          "SELECT SIZE_COUNT_180,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+size_percent=nzQuery(
+          "SELECT SIZE_COUNT, SIZE_COUNT_180, count(*) as COUNT FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING group by 1,2"
+)
+size_percent$SIZE_COUNT=as.integer(size_percent$SIZE_COUNT)
+size_percent$SIZE_COUNT_180=as.integer(size_percent$SIZE_COUNT_180)
+size_percent$COUNT=as.integer(size_percent$COUNT)
+
+size_percent$ratio=0
+for(i in 1:nrow(size_percent)){
+if(size_percent$SIZE_COUNT_180[i]==0){
+  size_percent$ratio[i]=1
+}
+else if (size_percent$SIZE_COUNT[i]==0){
+  size_percent$ratio[i]=0
+}
+else {
+  size_percent$ratio[i]= size_percent$SIZE_COUNT[i]/size_percent$SIZE_COUNT_180[i]
+}
+}
+require("dplyr")
+percent=size_percent %>%
+        group_by(ratio) %>%
+        summarise(count=sum(COUNT))
+percent=as.data.frame(percent)
+plot(percent$ratio,percent$count)
+
+search_entry=nzQuery(
+          "SELECT SEARCH_ENTRY_FLAG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+entry=nzQuery(
+          "SELECT ORIGINATION_MARKETING_PROGRAM_ROLLUP,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+entry$ORIGINATION_MARKETING_PROGRAM_ROLLUP=as.factor(entry$ORIGINATION_MARKETING_PROGRAM_ROLLUP)
+entry$COUNT=as.integer(entry$COUNT)
+plot(entry$ORIGINATION_MARKETING_PROGRAM_ROLLUP,entry$COUNT)
+
+
+device=nzQuery(
+          "SELECT DEVICE_TYPE,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+max_sku=nzQuery(
+          "SELECT MAX_SKU_PERCENT_OFF,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+max_sku$MAX_SKU_PERCENT_OFF=round(as.numeric(max_sku$MAX_SKU_PERCENT_OFF),2)
+max_sku$COUNT=as.integer(max_sku$COUNT)
+require("dplyr")
+max_sku=max_sku %>%
+        group_by(MAX_SKU_PERCENT_OFF) %>%
+        summarise(count=sum(COUNT))
+plot(max_sku$MAX_SKU_PERCENT_OFF, max_sku$count)
+max_sku=max_sku[order(max_sku$MAX_SKU_PERCENT_OFF, decreasing=TRUE),]
+outliers=head(max_sku,n=3)
+text(outliers$MAX_SKU_PERCENT_OFF, outliers$count+2500000, labels=outliers$MAX_SKU_PERCENT_OFF, col="darkred")
+
+min_sku=nzQuery(
+          "SELECT MIN_SKU_PERCENT_OFF,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+min_sku$MIN_SKU_PERCENT_OFF=round(as.numeric(min_sku$MIN_SKU_PERCENT_OFF),2)
+min_sku$COUNT=as.integer(min_sku$COUNT)
+require("dplyr")
+min_sku=min_sku %>%
+        group_by(MIN_SKU_PERCENT_OFF) %>%
+        summarise(count=sum(COUNT))
+plot(min_sku$MIN_SKU_PERCENT_OFF, min_sku$count)
+
+age=nzQuery(
+          "SELECT PRODUCT_AGE_DAYS,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+age$PRODUCT_AGE_DAYS=as.integer(age$PRODUCT_AGE_DAYS)
+age$COUNT=as.integer(age$COUNT)
+plot(age$PRODUCT_AGE_DAYS, age$COUNT)
+
+age_cat=nzQuery(
+          "SELECT AGE_CATEGORY,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+age_cat$AGE_CATEGORY=as.factor(age_cat$AGE_CATEGORY)
+age_cat$COUNT=as.integer(age_cat$COUNT)
+plot(age_cat$AGE_CATEGORY, age_cat$COUNT)
+
+gender=nzQuery(
+          "SELECT GENDER,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+gender$GENDER=as.factor(gender$GENDER)
+gender$COUNT=as.integer(gender$COUNT)
+plot(gender$GENDER, gender$COUNT)
+
+review=nzQuery(
+          "SELECT REVIEW_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+review$REVIEW_COUNT=as.factor(review$REVIEW_COUNT)
+review$COUNT=as.integer(review$COUNT)
+plot(review$REVIEW_COUNT, review$COUNT)
+
+score=nzQuery(
+          "SELECT REVIEW_SCORE,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+score$REVIEW_SCORE=round(as.numeric(score$REVIEW_SCORE),2)
+score$COUNT=as.integer(score$COUNT)
+require("dplyr")
+score=score %>%
+        group_by(REVIEW_SCORE) %>%
+        summarise(count=sum(COUNT))
+plot(score$REVIEW_SCORE, score$count)
+score=score[order(score$REVIEW_SCORE),]
+
+
+shop=nzQuery(
+          "SELECT SHOP_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+shop$SHOP_DESC=as.factor(shop$SHOP_DESC)
+shop$COUNT=as.integer(shop$COUNT)
+shop=shop[order(shop$COUNT, decreasing = T),]
+plot(shop$SHOP_DESC, shop$COUNT)
+text(x=shop$SHOP_DESC[1:4], y=shop$COUNT[1:4]-1500000, labels=head(shop$SHOP_DESC,n=4), col="blue")
+
+shop_price=nzQuery(
+          "SELECT SHOP_PRICE_AVG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+shop_price$SHOP_PRICE_AVG=round(as.numeric(shop_price$SHOP_PRICE_AVG),2)
+shop_price$COUNT=as.integer(shop_price$COUNT)
+shop_price=shop_price[order(shop_price$SHOP_PRICE_AVG),]
+shop_price=shop_price %>%
+          group_by(SHOP_PRICE_AVG) %>%
+          summarise(count=sum(COUNT))
+plot(shop_price$SHOP_PRICE_AVG, shop_price$count)
+
+
+class=nzQuery(
+          "SELECT CLASS_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+class$CLASS_DESC=as.factor(class$CLASS_DESC)
+class$COUNT=as.integer(class$COUNT)
+class=class[order(class$COUNT, decreasing = T),]
+plot(class$CLASS_DESC, class$COUNT)
+text(x=class$CLASS_DESC[1:4], y=class$COUNT[1:4]-10000, labels=head(class$CLASS_DESC,n=3), col="blue", cex=.7)
+
+
+class_price=nzQuery(
+          "SELECT CLASS_PRICE_AVG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+class_price$CLASS_PRICE_AVG=round(as.numeric(class_price$CLASS_PRICE_AVG),2)
+class_price$COUNT=as.integer(class_price$COUNT)
+class_price=class_price[order(class_price$CLASS_PRICE_AVG),]
+class_price=class_price %>%
+          group_by(CLASS_PRICE_AVG) %>%
+          summarise(count=sum(COUNT))
+plot(class_price$CLASS_PRICE_AVG, class_price$count)
+
+
+dept=nzQuery(
+          "SELECT DEPARTMENT_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+dept$DEPARTMENT_DESC=as.factor(dept$DEPARTMENT_DESC)
+dept$COUNT=as.integer(dept$COUNT)
+dept=dept[order(dept$COUNT, decreasing = T),]
+plot(dept$DEPARTMENT_DESC, dept$COUNT)
+text(x=dept$DEPARTMENT_DESC[1:8], y=dept$COUNT[1:8]-180000, labels=head(dept$DEPARTMENT_DESC,n=8), col="blue", cex=.7)
+
+
+dept_price=nzQuery(
+          "SELECT DEPARTMENT_DESC,DEPT_PRICE_AVG,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+dept_price$DEPT_PRICE_AVG=round(as.numeric(dept_price$DEPT_PRICE_AVG),2)
+dept_price$COUNT=as.integer(dept_price$COUNT)
+dept_price=dept_price %>%
+          group_by(DEPARTMENT_DESC,DEPT_PRICE_AVG) %>%
+          summarise(count=sum(COUNT))
+dept_price=dept_price[order(dept_price$DEPT_PRICE_AVG,decreasing=T),]
+plot(dept_price$DEPT_PRICE_AVG, dept_price$count)
+text(x=dept_price$DEPT_PRICE_AVG[1:3], y=dept_price$count[1:3]-150000, labels=head(dept_price$DEPARTMENT_DESC,n=3), col="gold4")
+
+
+pdp_size=nzQuery(
+          "SELECT PRODUCT_PAGE_SIZE_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+pdp_size$PRODUCT_PAGE_SIZE_COUNT=as.integer(pdp_size$PRODUCT_PAGE_SIZE_COUNT)
+pdp_size$COUNT=as.integer(pdp_size$COUNT)
+plot(pdp_size$PRODUCT_PAGE_SIZE_COUNT,pdp_size$COUNT)
+
+pdp_color=nzQuery(
+          "SELECT PRODUCT_PAGE_COLOR_COUNT,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+pdp_color$PRODUCT_PAGE_COLOR_COUNT=as.integer(pdp_color$PRODUCT_PAGE_COLOR_COUNT)
+pdp_color$COUNT=as.integer(pdp_color$COUNT)
+plot(pdp_color$PRODUCT_PAGE_COLOR_COUNT,pdp_color$COUNT)
+
+
+
+SESSIONS_VIEWED_60=nzQuery(
+          "SELECT distinct DATE_KEY,SESSIONS_VIEWED_60 as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING WHERE PRODUCT=100030"
+)
+SESSIONS_VIEWED_60$SESSIONS_VIEWED_60=as.integer(SESSIONS_VIEWED_60$SESSIONS_VIEWED_60)
+SESSIONS_VIEWED_60$COUNT=as.integer(SESSIONS_VIEWED_60$COUNT)
+plot(SESSIONS_VIEWED_60$SESSIONS_VIEWED_60, SESSIONS_VIEWED_60$COUNT)
+
+
+SESSIONS_VIEWED_60$DATE_KEY=as.Date(as.character(SESSIONS_VIEWED_60$DATE_KEY),"%Y%m%d")
+SESSIONS_VIEWED_60$COUNT=as.integer(SESSIONS_VIEWED_60$COUNT)
+SESSIONS_VIEWED_60=SESSIONS_VIEWED_60[order(SESSIONS_VIEWED_60$DATE_KEY),]
+plot(SESSIONS_VIEWED_60$DATE_KEY,SESSIONS_VIEWED_60$COUNT, type="b")
+
+
+SESSIONS_VIEWED_30=nzQuery(
+          "SELECT SESSIONS_VIEWED_30,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+SESSIONS_VIEWED_30$SESSIONS_VIEWED_30=as.integer(SESSIONS_VIEWED_30$SESSIONS_VIEWED_30)
+SESSIONS_VIEWED_30$COUNT=as.integer(SESSIONS_VIEWED_30$COUNT)
+plot(SESSIONS_VIEWED_30$SESSIONS_VIEWED_30, SESSIONS_VIEWED_30$COUNT)
+
+
+SESSIONS_VIEWED_10=nzQuery(
+          "SELECT PRODUCT,SESSIONS_VIEWED_10,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+SESSIONS_VIEWED_10$SESSIONS_VIEWED_10=as.integer(SESSIONS_VIEWED_10$SESSIONS_VIEWED_10)
+SESSIONS_VIEWED_10$COUNT=as.integer(SESSIONS_VIEWED_10$COUNT)
+plot(SESSIONS_VIEWED_10$SESSIONS_VIEWED_10, SESSIONS_VIEWED_10$COUNT)
+
+
+SESSIONS_CONV_60=nzQuery(
+          "SELECT SESSIONS_CONV_60,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+
+SESSIONS_CONV_30=nzQuery(
+          "SELECT SESSIONS_CONV_30,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+SESSIONS_CONV_10=nzQuery(
+          "SELECT SESSIONS_CONV_10,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1"
+)
+
+
+silh=nzQuery(
+          "SELECT SHOP_DESC, SILHOUETTE_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+s_table=table(a=silh$SHOP_DESC, b=silh$SILHOUETTE_DESC)
+
+value=nzQuery(
+          "SELECT SHOP_DESC, VALUE_TIER_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+
+activity=nzQuery(
+          "SELECT SHOP_DESC, PRIMARY_ACTIVITY_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+
+skill=nzQuery(
+          "SELECT SHOP_DESC, SKILL_LEVEL_DESC,count(*) as count FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING GROUP BY 1,2"
+)
+
+# Disconnect
+#nzDisconnect()
+
+```
+
+```{r SETUP: Reformat Functions}
+reformat_rf=function(data=data){
+  data$ SIZE_COUNT=as.integer(data$ SIZE_COUNT)
+  data$ SIZE_COUNT_180=as.integer(data$ SIZE_COUNT_180)
+  data$size_percent=ifelse(data$SIZE_COUNT_180==0, 1,ifelse(data$SIZE_COUNT==0, 0, data$SIZE_COUNT/data$SIZE_COUNT_180))  ##add Size Percent Complete based on sizes 6mos ago
+  data$ SEASON=as.factor(data$ SEASON)
+  data$ PRICE_BAND=as.factor(data$ PRICE_BAND)
+  data$ DISTRICT_NAME=as.factor(data$ DISTRICT_NAME)
+  data$ STATE_NAME=as.factor(data$ STATE_NAME)
+  data$STORES_WITHIN_30MINS=ifelse(is.na(data$STORES_WITHIN_30MINS),"UNKNOWN",data$STORES_WITHIN_30MINS)
+  data$STORES_WITHIN_60MINS=ifelse(is.na(data$STORES_WITHIN_60MINS),"UNKNOWN",data$STORES_WITHIN_60MINS)
+  data$STORES_WITHIN_30MINS=as.factor(data$STORES_WITHIN_30MINS)
+  data$STORES_WITHIN_60MINS=as.factor(data$STORES_WITHIN_60MINS)
+  
+  data$ PURCHASE_FLAG=as.factor(data$ PURCHASE_FLAG)
+  data$ ATC_FLAG=as.factor(data$ ATC_FLAG)
+  data$ INTERACTION_FLAG=as.factor(data$ INTERACTION_FLAG)
+  
+  data$EVENT_FLAG=as.factor(data$EVENT_FLAG)
+  data$ ORIGINATION_MARKETING_PROGRAM_ROLLUP=as.factor(data$ ORIGINATION_MARKETING_PROGRAM_ROLLUP)
+  data$ PRODUCT_PAGE_SIZE_COUNT=as.integer(data$ PRODUCT_PAGE_SIZE_COUNT)
+  data$ PRODUCT_PAGE_COLOR_COUNT=as.integer(data$ PRODUCT_PAGE_COLOR_COUNT)
+  data$ BRAND_CAT=as.factor(data$ BRAND_CAT)
+  data$ SEARCH_ENTRY_FLAG=as.factor(data$ SEARCH_ENTRY_FLAG)
+  data$ FISCAL_DAY_NAME=as.factor(data$ FISCAL_DAY_NAME)
+  data$ WEEKDAY=as.factor(data$ WEEKDAY)
+  
+  data$ MAX_SKU_PERCENT_OFF=as.numeric(data$ MAX_SKU_PERCENT_OFF)
+  data$ MIN_SKU_PERCENT_OFF=as.numeric(data$ MIN_SKU_PERCENT_OFF)
+  data$ SALE_SKU_COUNT=as.integer(data$ SALE_SKU_COUNT)
+  data$ TOTAL_SKU_COUNT=as.integer(data$ TOTAL_SKU_COUNT)
+  data$ CLEARANCE_SKU_COUNT=as.integer(data$ CLEARANCE_SKU_COUNT)
+  data$ SUPER_CLEARANCE_SKU_COUNT=as.integer(data$ SUPER_CLEARANCE_SKU_COUNT)
+  data$ TOTAL_SKU_COUNT=as.integer(data$ TOTAL_SKU_COUNT)
+  data$ REGULAR_SKU_COUNT=as.integer(data$ REGULAR_SKU_COUNT)
+  data$ REVIEW_COUNT=as.integer(data$ REVIEW_COUNT)
+  data$ REVIEW_SCORE=as.numeric(data$ REVIEW_SCORE)
+  data$ GENDER=as.factor(data$ GENDER)
+  data$ USA_FLAG=as.factor(data$ USA_FLAG)
+  data$ CHINA_FLAG=as.factor(data$ CHINA_FLAG)
+  data$ AGE_CATEGORY=as.factor(data$ AGE_CATEGORY)
+  data$ SHOP_DESC=as.factor(data$ SHOP_DESC)
+  data$ DEPARTMENT_DESC=as.factor(data$ DEPARTMENT_DESC)
+  data$ CLASS_DESC=as.factor(data$ CLASS_DESC)
+  
+  data$ SESSIONS_VIEWED_60=as.integer(data$ SESSIONS_VIEWED_60)
+  data$ SESSIONS_CONV_10=as.integer(data$ SESSIONS_CONV_10)
+    data$ SESSIONS_VIEWED_30=as.integer(data$ SESSIONS_VIEWED_30)
+  data$ SESSIONS_CONV_30=as.integer(data$ SESSIONS_CONV_30)
+    data$ SESSIONS_VIEWED_10=as.integer(data$ SESSIONS_VIEWED_10)
+  data$ SESSIONS_CONV_60=as.integer(data$ SESSIONS_CONV_60)
+  
+  data$ MAX_SKU_PRICE=as.numeric(data$ MAX_SKU_PRICE)
+  data$ SHOP_PRICE_AVG=as.numeric(data$SHOP_PRICE_AVG)
+  data$ DEPT_PRICE_AVG=as.numeric(data$DEPT_PRICE_AVG)
+  data$ CLASS_PRICE_AVG=as.numeric(data$CLASS_PRICE_AVG)
+  
+  data$AVG_DEPT_SKU_COUNT=as.numeric(data$AVG_DEPT_SKU_COUNT)
+  data$AVG_CLASS_SKU_COUNT=as.numeric(data$AVG_CLASS_SKU_COUNT)
+  
+  data$AVG_DEPT_SKU_COUNT=as.numeric(round(data$AVG_DEPT_SKU_COUNT,1))
+  data$AVG_CLASS_SKU_COUNT=as.numeric(round(data$AVG_CLASS_SKU_COUNT,1))
+  
+  data$sku_ratio_to_dept=data$TOTAL_SKU_COUNT/data$AVG_DEPT_SKU_COUNT
+  data$sku_ratio_to_class=data$TOTAL_SKU_COUNT/data$AVG_CLASS_SKU_COUNT
+  
+  data$price_ratio_to_shop=data$ MAX_SKU_PRICE/data$SHOP_PRICE_AVG
+  data$price_ratio_to_class=data$ MAX_SKU_PRICE/data$CLASS_PRICE_AVG
+  data$price_ratio_to_dept=data$ MAX_SKU_PRICE/data$DEPT_PRICE_AVG
+  data$SIZE_COMPLETENESS_LEVEL = as.factor(data$SIZE_COMPLETENESS_LEVEL)
+  data$STORE_FLAG= as.factor(data$STORE_FLAG)
+  data$RR_FLAG= as.factor(data$RR_FLAG)
+  data$ON_SALE_FLAG = as.factor(data$ON_SALE_FLAG)
+  data$DEVICE_TYPE=as.factor(data$DEVICE_TYPE)
+  return(data)
+  
+}
+
+reformat_mba=function(total=data){
+  total$EVENT_FLAG[which(total$EVENT_FLAG==1)]="Event"
+  total$EVENT_FLAG[which(total$EVENT_FLAG==0)]="NonEvent"
+  total$EVENT_FLAG=as.factor(total$EVENT_FLAG)
+  
+  total$DEVICE_TYPE=as.factor(total$DEVICE_TYPE)
+  total$PRICE_BAND=as.factor(total$PRICE_BAND)
+  total$STATE_NAME=ifelse(is.na(total$STATE_NAME),"UNKNOWN",total$STATE_NAME)
+  total$DISTRICT_NAME=ifelse(is.na(total$DISTRICT_NAME),"UNKNOWN",total$DISTRICT_NAME)
+  total$ STATE_NAME=as.factor(total$ STATE_NAME)
+  total$ DISTRICT_NAME=as.factor(total$ DISTRICT_NAME)
+  
+  total$ FISCAL_DAY_NAME=as.factor(total$ FISCAL_DAY_NAME)
+  total$ WEEKDAY_P=as.factor(total$ WEEKDAY_P)  
+  total$ ORIGINATION_MARKETING_PROGRAM_ROLLUP=as.factor(total$ ORIGINATION_MARKETING_PROGRAM_ROLLUP)
+  total$ BRAND_CAT=as.factor(total$ BRAND_CAT)  
+  
+  total$STORES_WITHIN_30MINS=ifelse(is.na(total$STORES_WITHIN_30MINS),"UNKNOWN",total$STORES_WITHIN_30MINS)
+  total$STORES_WITHIN_30MINS[which(total$STORES_WITHIN_30MINS==0)]="0 Stores-30min"
+  total$STORES_WITHIN_30MINS[which(total$STORES_WITHIN_30MINS==1)]="1 Stores-30min"
+  total$STORES_WITHIN_30MINS[which(total$STORES_WITHIN_30MINS %in% c(2,3))]="2-3 Stores-30min"
+  total$STORES_WITHIN_30MINS[which(total$STORES_WITHIN_30MINS>=4)]="4+ Stores-30min"
+  total$STORES_WITHIN_30MINS=as.factor(total$STORES_WITHIN_30MINS)
+  
+  total$STORES_WITHIN_60MINS=ifelse(is.na(total$STORES_WITHIN_60MINS),"UNKNOWN",total$STORES_WITHIN_60MINS)
+  total$STORES_WITHIN_60MINS[which(total$STORES_WITHIN_60MINS==0)]="0 Stores-60min"
+  total$STORES_WITHIN_60MINS[which(total$STORES_WITHIN_60MINS==1)]="1 Stores-60min"
+  total$STORES_WITHIN_60MINS[which(total$STORES_WITHIN_60MINS %in% c(2,3))]="2-3 Stores-60min"
+  total$STORES_WITHIN_60MINS[which(total$STORES_WITHIN_60MINS>=4)]="4+ Stores-60min"  
+  total$STORES_WITHIN_60MINS=as.factor(total$STORES_WITHIN_60MINS)
+
+  total$PURCHASE_FLAG[which(total$PURCHASE_FLAG==1)]="Purchase"
+  total$PURCHASE_FLAG[which(total$PURCHASE_FLAG==0)]="No Purchase"  
+  total$ PURCHASE_FLAG=as.factor(total$ PURCHASE_FLAG)
+
+  total$ATC_FLAG[which(total$ATC_FLAG==1)]="ATC"
+  total$ATC_FLAG[which(total$ATC_FLAG==0)]="No ATC"    
+  total$ ATC_FLAG=as.factor(total$ ATC_FLAG)
+  
+  total$INTERACTION_FLAG[which(total$INTERACTION_FLAG==1)]="Interaction"
+  total$INTERACTION_FLAG[which(total$INTERACTION_FLAG==0)]="No Interaction"
+  total$ INTERACTION_FLAG=as.factor(total$ INTERACTION_FLAG)
+
+  total$SEARCH_ENTRY_FLAG[which(total$SEARCH_ENTRY_FLAG==1)]="Search Entry"
+  total$SEARCH_ENTRY_FLAG[which(total$SEARCH_ENTRY_FLAG==0)]="Non Search Entry"
+  total$ SEARCH_ENTRY_FLAG=as.factor(total$ SEARCH_ENTRY_FLAG)
+  total$SIZE_COMPLETENESS_LEVEL = as.factor(total$SIZE_COMPLETENESS_LEVEL)
+  total$ AGE_CATEGORY=as.factor(total$ AGE_CATEGORY)  
+  total$ GENDER=as.factor(total$ GENDER) 
+  
+  total$STORE_FLAG[which(total$STORE_FLAG==1)]="Find In Store Click"
+  total$STORE_FLAG[which(total$STORE_FLAG==0)]="No Find In Store Click"
+  total$STORE_FLAG= as.factor(total$STORE_FLAG)
+  
+  total$ON_SALE_FLAG[which(total$ON_SALE_FLAG==1)]="On Sale"
+  total$ON_SALE_FLAG[which(total$ON_SALE_FLAG==0)]="Regular Price"
+  total$ON_SALE_FLAG = as.factor(total$ON_SALE_FLAG)
+  
+  total$ SHOP_DESC=as.factor(total$ SHOP_DESC)
+  total$SIZE_COMPLETENESS_LEVEL = as.factor(total$SIZE_COMPLETENESS_LEVEL)
+  
+  return(total)
+}
+
+```
+
+```{r SETUP: RF Functions}
+###### FUNCTIONS #######
+########################
+#Test/train
+split=function(seed=123, data=one_na, train=.7){
+  set.seed(seed)
+  train_ind=sample(seq_len(nrow(data)), size = round(nrow(data)*train))
+
+  return=list()
+  return$train=data[train_ind, ]
+  return$test=data[-train_ind, ]
+  return(return)
+}
+
+
+#RF
+require('ranger')
+require("dplyr")
+rf_function=function(label="one_p", y="PURCHASE_FLAG", data=train, vars=vars, test=test, seed=123, num.trees=25){
+  list=list()
+  label=label
+  if(y=="PURCHASE_FLAG"){
+  rf_ranger=ranger(PURCHASE_FLAG~., data = data[,c("PURCHASE_FLAG",vars)], 
+                   importance = "impurity",
+                   num.trees = num.trees, 
+                    write.forest = TRUE, 
+                    respect.unordered.factors = TRUE, 
+                    verbose = TRUE,
+                    seed=seed)
+  test1=test[,c("PURCHASE_FLAG",vars)]
+  }
+  
+  else if(y=="ATC_FLAG"){
+  rf_ranger=ranger(ATC_FLAG~., data = data[,c("ATC_FLAG",vars)], 
+                   importance = "impurity",
+                   num.trees = num.trees, 
+                    write.forest = TRUE, 
+                    respect.unordered.factors = TRUE, 
+                    verbose = TRUE,
+                    seed=seed)
+  
+  test1=test[,c("ATC_FLAG",vars)]
+  }
+  
+  else if(y=="INTERACTION_FLAG"){
+  rf_ranger=ranger(INTERACTION_FLAG~., data = data[,c("INTERACTION_FLAG",vars)], 
+                   importance = "impurity",
+                   num.trees = num.trees, 
+                    write.forest = TRUE, 
+                    respect.unordered.factors = TRUE, 
+                    verbose = TRUE,
+                    seed=seed)
+  
+  test1=test[,c("INTERACTION_FLAG",vars)]
+  }
+  
+  imp_ranger=importance(rf_ranger)
+  imp_ranger_frame=data.frame(imp_ranger)[order(imp_ranger, decreasing=T),,drop = FALSE]
+  #save(rf_ranger,file = paste0(label,"-",seed,"_rf.RData"))
+  #save(imp_ranger_frame,file = paste0(label,"-",seed,"_rfImportance.RData"))
+  
+  pred=predict(rf_ranger, data=test1, predict.all = FALSE,
+                num.trees=num.trees, type = "response", se.method = "infjack", 
+                quantiles = c(0.1, 0.5, 0.9),
+                seed=seed)
+  output=cbind(pred$predictions,test1[,1], pred$predictions==test1[,1])
+  accuracy=prop.table(table(output[,3]))
+  #save(accuracy,file = paste0(label,"-",seed,"_rfAccuracy.RData"))
+  
+  list$data_size=nrow(data)
+  list$rf=rf_ranger
+  list$accuracy=accuracy
+  list$imp=imp_ranger_frame
+  return(list)
+}
+
+#Ouptut Table
+output_table_setup=function(data=purchase_seg, col_names=c("device","event"), vars=vars){
+  colnames(data)=col_names
+  data$train_size=0
+  data$accuracy=0
+  
+  for(i in 1:length(vars)){
+    data$i=0
+    colnames(data)[ncol(data)]=vars[i]
+  }
+  
+  return(data)
+}
+
+#Balance data sample
+require("ROSE")
+#balanceIt=function(data=data_clean_p, seed=1, success="PURCHASE_FLAG"){
+  
+  if(success=="PURCHASE_FLAG"){
+    data_balanced1=ovun.sample(PURCHASE_FLAG ~ ., data = data, method = "both",seed = seed)$data
+    return(data_balanced1)
+  } else if(success=="ATC_FLAG"){
+      data_balanced1=ovun.sample(ATC_FLAG ~ ., data = data, method = "both",seed = seed)$data
+      return(data_balanced1)
+  } else if(success=="INTERACTION_FLAG"){
+      data_balanced1=ovun.sample(INTERACTION_FLAG ~ ., data = data, method = "both",seed = seed)$data
+      return(data_balanced1)
+  }
+  
+  # data_balanced1$Marketing_Flag=0
+  # data_balanced1$Marketing_Flag[which(data_balanced1$ORIGINATION_MARKETING_PROGRAM_ROLLUP %in% c("Email","Error/Other"))]=1
+  # data_balanced1=ovun.sample(Marketing_Flag ~ ., data = data_balanced1, method = "both",seed = 1)$data
+  # 
+  # data_balanced1$geo=0
+  # data_balanced1$geo[which(data_balanced1$geo_group ==5)]=1
+  # data_balanced1=ovun.sample(geo ~ ., data = data_balanced1, method = "both",seed = 1)$data
+  # 
+  # data_balanced1$Marketing_Flag=0
+  # data_balanced1$Marketing_Flag[which(data_balanced1$ORIGINATION_MARKETING_PROGRAM_ROLLUP %in% c("Email","Direct Load"))]=1
+  # data_balanced=ovun.sample(Marketing_Flag ~ ., data = data_balanced1, method = "both",seed = 1)$data
+  
+  #return(data_balanced1)
+}
+
+#Add geo var
+#geo_group=function(data=data){
+  data$geo_group=0
+  data$geo_group=ifelse(data$STATE_NAME=="DE",1, ifelse(data$STATE_NAME=="UNKNOWN",2, ifelse(data$STATE_NAME %in% c("VT","ME","LA","NH"),3, ifelse(data$STORES_WITHIN_60MINS==0,4,5))))
+  data$geo_group=as.factor(data$geo_group)
+  return(data$geo_group)
+}
+
+#RF Model Run
+run_model=function(segment=purchase_seg, query=query, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70){
+  
+  total_list=list()
+for(i in 1:nrow(segment)){
+  Device=segment$device[i]
+  Event=segment$event[i]
+  Marketing=segment$marketing[i]
+  Geo=segment$geo[i]
+  Dept=segment$dept[i]
+  
+  ###Pull data from database
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=seed, success=success)
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="-", y=success, data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=seed, num.trees=trees)
+  
+  for(j in (length(col_names)+1):ncol(segment)){
+    if(j==(length(col_names)+1)){
+      segment[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        segment[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(segment)[j]
+      segment[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  
+}
+  total_list$segment=segment
+  return(total_list)
+  
+}
+
+```
+
+```{r MAINT: New Geo Var}
+
+#data_clean
+
+# Geos	
+# {DE}	More Likely to Purchase
+# {UNKNOWN}	Less Likely to Purchase & ATC
+# {VT, ME, LA, NH}	Less Likely to Interact
+# {AL, AR, FL, GA, HI, IL, KY, NJ, TN, TX}	More Likely On Mobile
+# {0 Stores-60min}	?
+
+
+data$geo_group=0
+data$geo_group=ifelse(data$STATE_NAME=="DE",1, ifelse(data$STATE_NAME=="UNKNOWN",2, ifelse(data$STATE_NAME %in% c("VT","ME","LA","NH"),3, ifelse(data$STORES_WITHIN_60MINS==0,4,5))))
+data$geo_group=as.factor(data$geo_group)
+table(data_clean$geo_group)
+
+save(data_clean,file="Data_Clean.RData")
+
+```
+
+```{r MAINT: Fix class imbalance}
+#https://www.analyticsvidhya.com/blog/2016/03/practical-guide-deal-imbalanced-classification-problems/
+
+####### RUN FIRST #######
+########################
+# SETUP: Reformat Functions
+# SETUP: Vars List
+
+####### Sampling Algos ########
+################################
+#install.packages("ROSE")
+require("ROSE")
+
+#load("~/SRW/Segment 1/Full_Data.RData")
+data_clean_p=reformat_rf(data_p)
+data_clean_i=reformat_rf(data_i)
+data_clean_a=reformat_rf(data_a)
+
+save(data_clean_p,file="data_clean_p.RData")
+save(data_clean_i,file="data_clean_i.RData")
+save(data_clean_a,file="data_clean_a.RData")
+
+vars=c("SIZE_COUNT",
+  "SIZE_COUNT_180",
+  "size_percent",
+  "PRICE_BAND",
+  "DISTRICT_NAME",
+  "STATE_NAME",
+  "STORES_WITHIN_30MINS",
+  "STORES_WITHIN_60MINS",
+  "STORES_WITHIN_30MINS",
+  "STORES_WITHIN_60MINS",
+  "PURCHASE_FLAG",
+  "ATC_FLAG",
+  "INTERACTION_FLAG",
+  "EVENT_FLAG",
+  "ORIGINATION_MARKETING_PROGRAM_ROLLUP",
+  "PRODUCT_PAGE_SIZE_COUNT",
+  "PRODUCT_PAGE_COLOR_COUNT",
+  "BRAND_CAT",
+  "SEARCH_ENTRY_FLAG",
+  "FISCAL_DAY_NAME",
+  "WEEKDAY",
+  "MAX_SKU_PERCENT_OFF",
+  "MIN_SKU_PERCENT_OFF",
+  "SALE_SKU_COUNT",
+  "CLEARANCE_SKU_COUNT",
+  "SUPER_CLEARANCE_SKU_COUNT",
+  "TOTAL_SKU_COUNT",
+  "REGULAR_SKU_COUNT",
+  "REVIEW_COUNT",
+  "REVIEW_SCORE",
+  "GENDER",
+  "USA_FLAG",
+  "CHINA_FLAG",
+  "AGE_CATEGORY",
+  "SHOP_DESC",
+  "DEPARTMENT_DESC",
+  "CLASS_DESC",
+  "SESSIONS_VIEWED_60",
+  "SESSIONS_CONV_10",
+  "SESSIONS_VIEWED_30",
+  "SESSIONS_CONV_30",
+  "SESSIONS_VIEWED_10",
+  "SESSIONS_CONV_60",
+  "MAX_SKU_PRICE",
+  "SHOP_PRICE_AVG",
+  "DEPT_PRICE_AVG",
+  "CLASS_PRICE_AVG",
+  "AVG_DEPT_SKU_COUNT",
+  "AVG_CLASS_SKU_COUNT",
+  "AVG_DEPT_SKU_COUNT",
+  "AVG_CLASS_SKU_COUNT",
+  "sku_ratio_to_dept",
+  "sku_ratio_to_class",
+  "price_ratio_to_shop",
+  "price_ratio_to_class",
+  "price_ratio_to_dept",
+  "SIZE_COMPLETENESS_LEVEL",
+  "STORE_FLAG",
+  "RR_FLAG",
+  "ON_SALE_FLAG",
+  "DEVICE_TYPE", "SEASON"
+)
+
+
+####### PURCHASE ########
+#########################
+data_clean_p2=data_clean_p[,c("PURCHASE_FLAG",vars)]
+prop.table(table(data_clean_p2$PURCHASE_FLAG)) #not balanced
+prop.table(table(data_clean_p2$EVENT_FLAG))  #ok balanced
+prop.table(table(data_clean_p2$DEVICE_TYPE)) #not balanced
+prop.table(table(data_clean_p2$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #not balanced
+
+#Under and Over Sampling
+data_balanced=ovun.sample(DEVICE_TYPE ~ ., data = data_clean_p2,method = "both",seed = 1)$data
+#data_balanced=ovun.sample(DEVICE_TYPE ~ ., data = data_balanced,N=5500000,  method = "both",seed = 1)$data
+
+# data_balanced$Marketing_Flag=0
+# data_balanced$Marketing_Flag[which(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP %in% c("Email","Direct Load"))]=1
+# data_balanced=ovun.sample(Marketing_Flag ~ ., data = data_balanced, method = "both",seed = 1)$data
+
+prop.table(table(data_balanced$PURCHASE_FLAG)) #balanced
+prop.table(table(data_balanced$EVENT_FLAG))  #balanced
+prop.table(table(data_balanced$DEVICE_TYPE)) #balanced
+#prop.table(table(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #meh
+
+data_balanced_p=data_balanced
+save(data_balanced_p,file="data_balanced_p.RData")
+
+
+####### ATC ########
+####################
+data_clean_a2=data_clean_a[,c("ATC_FLAG",vars)]
+prop.table(table(data_clean_a2$ATC_FLAG)) #not balanced
+prop.table(table(data_clean_a2$EVENT_FLAG))  #ok balanced
+prop.table(table(data_clean_a2$DEVICE_TYPE)) #not balanced
+prop.table(table(data_clean_a2$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #not balanced
+
+#Under and Over Sampling
+#data_balanced=ovun.sample(ATC_FLAG ~ ., data = data_clean_a,N=5000000, method = "over",seed = 1)$data
+#data_balanced=ovun.sample(EVENT_FLAG ~ ., data = data_balanced, N=5000000,method = "both",seed = 1)$data
+data_balanced=ovun.sample(DEVICE_TYPE ~ ., data = data_clean_a2, method = "both",seed = 1)$data
+
+# data_balanced$Marketing_Flag=0
+# data_balanced$Marketing_Flag[which(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP %in% c("Direct Load","Organic Search"))]=1
+# data_balanced=ovun.sample(Marketing_Flag ~ ., data = data_balanced, method = "both",seed = 1)$data
+
+prop.table(table(data_balanced$ATC_FLAG)) #balanced
+prop.table(table(data_balanced$EVENT_FLAG))  #balanced
+prop.table(table(data_balanced$DEVICE_TYPE)) #balanced
+prop.table(table(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #meh
+
+data_balanced_a=data_balanced
+save(data_balanced_a,file="data_balanced_a.RData")
+
+
+###### INTERACTION ######
+#########################
+data_clean_i2=data_clean_i[,c("INTERACTION_FLAG",vars)]
+prop.table(table(data_clean_i2$INTERACTION_FLAG)) #not balanced
+prop.table(table(data_clean_i2$EVENT_FLAG))  #ok balanced
+prop.table(table(data_clean_i2$DEVICE_TYPE)) #not balanced
+prop.table(table(data_clean_i2$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #not balanced
+
+#Under and Over Sampling
+#data_balanced=ovun.sample(INTERACTION_FLAG ~ ., data = data_clean_i, method = "both",seed = 1)$data
+#data_balanced=ovun.sample(EVENT_FLAG ~ ., data = data_balanced, method = "both",seed = 1)$data
+data_balanced=ovun.sample(DEVICE_TYPE ~ ., data = data_clean_i2, method = "both",seed = 1)$data
+
+# data_balanced$Marketing_Flag=0
+# data_balanced$Marketing_Flag[which(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP %in% c("Error/Other","Email","Organic Search"))]=1
+# data_balanced=ovun.sample(Marketing_Flag ~ ., data = data_balanced, method = "both",seed = 1)$data
+
+prop.table(table(data_balanced$INTERACTION_FLAG)) #ok balanced
+prop.table(table(data_balanced$EVENT_FLAG))  #balanced
+prop.table(table(data_balanced$DEVICE_TYPE)) #balanced
+prop.table(table(data_balanced$ORIGINATION_MARKETING_PROGRAM_ROLLUP))  #meh
+
+data_balanced_i=data_balanced
+save(data_balanced_i,file="data_balanced_i.RData")
+
+
+###Under Sampling
+# data_balanced_under <- ovun.sample(cls ~ ., data = hacide.train, method = "under", N = 40, seed = 1)$data
+# table(data_balanced_under$cls)
+
+###Over Sampling
+# data_balanced_over <- ovun.sample(cls ~ ., data = hacide.train, method = "over",N = 1960)$data
+# table(data_balanced_over$cls)
+
+```
+
+```{r EXPLORATORY: Check Consistency of Sample}
+####### RUN FIRST #######
+########################
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+#3 SETUP: RF Functions
+
+
+
+#RUNNNNNNNNN
+#connect to database; open connection
+require('ranger')
+require("dplyr")
+
+
+data_chunk=c('1 and 5000000','5000001 and 10000000', '10000001 and 15000000', '15000001 and 20000000', '20000001 and 25000000','25000001 and 30000000','30000001 and 35000000','35000001 and 40000000','40000001 and 45000000','45000001 and 50000000','50000001 and 55000000','55000001 and 60000000')
+
+for(i in 1:length(data_chunk)){
+  chunk=data_chunk[i]
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V4 WHERE SORT_NUM between ",chunk)
+
+  ###Pull data from database
+  total=nzQuery(query)
+  
+  ###Reformat vars
+  total$EVENT_FLAG=as.factor(total$EVENT_FLAG)
+  total$DEVICE_TYPE=as.factor(total$DEVICE_TYPE)
+  total$PRICE_BAND=as.factor(total$PRICE_BAND)
+  total$STATE_NAME=ifelse(is.na(total$STATE_NAME),"UNKNOWN",total$STATE_NAME)
+  total$DISTRICT_NAME=ifelse(is.na(total$DISTRICT_NAME),"UNKNOWN",total$DISTRICT_NAME)
+  total$ PURCHASE_FLAG=as.factor(total$ PURCHASE_FLAG)
+  total$ ATC_FLAG=as.factor(total$ ATC_FLAG)
+  total$ INTERACTION_FLAG=as.factor(total$ INTERACTION_FLAG)
+  total$ FISCAL_DAY_NAME=as.factor(total$ FISCAL_DAY_NAME)
+  total$ WEEKDAY_P=as.factor(total$ WEEKDAY_P)
+  total$ STATE_NAME=as.factor(total$ STATE_NAME)
+  total$ DISTRICT_NAME=as.factor(total$ DISTRICT_NAME)
+  total$ ORIGINATION_MARKETING_PROGRAM_ROLLUP=as.factor(total$ ORIGINATION_MARKETING_PROGRAM_ROLLUP)
+  total$ PRODUCT_PAGE_SIZE_COUNT=as.integer(total$ PRODUCT_PAGE_SIZE_COUNT)
+  total$ PRODUCT_PAGE_COLOR_COUNT=as.integer(total$ PRODUCT_PAGE_COLOR_COUNT)
+  total$ BRAND_CAT=as.factor(total$ BRAND_CAT)
+  total$ SEARCH_ENTRY_FLAG=as.factor(total$ SEARCH_ENTRY_FLAG)
+  total$ MAX_SKU_PRICE=as.numeric(total$ MAX_SKU_PRICE)
+  total$ MAX_SKU_PERCENT_OFF=as.numeric(total$ MAX_SKU_PERCENT_OFF)
+  total$ MIN_SKU_PERCENT_OFF=as.numeric(total$ MIN_SKU_PERCENT_OFF)
+  #total$ TOTAL_SKU_COUNT=as.integer(total$ TOTAL_SKU_COUNT)
+  total$ SALE_SKU_COUNT=as.integer(total$ SALE_SKU_COUNT)
+  total$ CLEARANCE_SKU_COUNT=as.integer(total$ CLEARANCE_SKU_COUNT)
+  total$ SUPER_CLEARANCE_SKU_COUNT=as.integer(total$ SUPER_CLEARANCE_SKU_COUNT)
+  total$ OUTLET_SKU_COUNT=as.integer(total$ OUTLET_SKU_COUNT)
+  total$ REGULAR_SKU_COUNT=as.integer(total$ REGULAR_SKU_COUNT)
+  total$ REVIEW_COUNT=as.integer(total$ REVIEW_COUNT)
+  total$ REVIEW_SCORE=as.numeric(total$ REVIEW_SCORE)
+  total$ GENDER=as.factor(total$ GENDER)
+  total$ USA_FLAG=as.factor(total$ USA_FLAG)
+  total$ CHINA_FLAG=as.factor(total$ CHINA_FLAG)
+  total$ AGE_CATEGORY=as.factor(total$ AGE_CATEGORY)
+  total$ SHOP_DESC=as.factor(total$ SHOP_DESC)
+  # total$ SILHOUETTE_DESC=as.factor(total$ SILHOUETTE_DESC)
+  # total$ VALUE_TIER_DESC=as.factor(total$ VALUE_TIER_DESC)
+  # total$ PRIMARY_ACTIVITY_DESC=as.factor(total$ PRIMARY_ACTIVITY_DESC)
+  # total$ SKILL_LEVEL_DESC=as.factor(total$ SKILL_LEVEL_DESC)
+  total$ SESSIONS_VIEWED_60=as.integer(total$ SESSIONS_VIEWED_60)
+  # total$ SESSIONS_VIEWED_30=as.integer(total$ SESSIONS_VIEWED_30)
+  # total$ SESSIONS_VIEWED_10=as.integer(total$ SESSIONS_VIEWED_10)
+  # total$ SESSIONS_CONV_60=as.integer(total$ SESSIONS_CONV_60)
+  # total$ SESSIONS_CONV_30=as.integer(total$ SESSIONS_CONV_30)
+  total$ SESSIONS_CONV_10=as.integer(total$ SESSIONS_CONV_10)
+  total$SHOP_PRICE_AVG=as.numeric(total$SHOP_PRICE_AVG)
+  #total$DEPT_PRICE_AVG=as.numeric(total$DEPT_PRICE_AVG)
+  total$CLASS_PRICE_AVG=as.numeric(total$CLASS_PRICE_AVG)
+  
+  total$price_ratio_to_shop=total$ MAX_SKU_PRICE/total$SHOP_PRICE_AVG
+  #total$price_ratio_to_dept=total$ MAX_SKU_PRICE/total$DEPT_PRICE_AVG
+  total$price_ratio_to_class=total$ MAX_SKU_PRICE/total$CLASS_PRICE_AVG
+  total$SIZE_COMPLETENESS_LEVEL = as.factor(total$SIZE_COMPLETENESS_LEVEL)
+  total$STORE_FLAG= as.factor(total$STORE_FLAG)
+  total$ON_SALE_FLAG = as.factor(total$ON_SALE_FLAG)
+  
+
+  total_na=na.omit(total[,c(y,vars)])
+  
+  #Split Data
+  total_split=split(seed=123, data=total_na, train=.7)
+  save(total_split,file = paste0("Total-",i,".RData"))
+  
+  output=rf_function(label=i, y="PURCHASE_FLAG", data=total_split$train, vars=vars, test=total_split$test, seed=284, num.trees=50)
+  save(output,file = paste0("TOTAL-",i,"_rfOutput.RData"))
+
+}
+
+```
+
+```{r EXPLORATORY: Correlation on cont. vars}
+load("~/SRW/Segment 1/total_split.RData")
+total=rbind(total_split$train,total_split$test)
+correlation=cor(total[,c('SESSIONS_VIEWED_60',
+'SESSIONS_VIEWED_30',
+'SESSIONS_VIEWED_10',
+'SESSIONS_CONV_60',
+'SESSIONS_CONV_30',
+'SESSIONS_CONV_10')])
+
+#keep SESSIONS_VIEWED_60 and SESSIONS_CONV_10?
+
+corr2=cor(total[,c('PRODUCT_PAGE_SIZE_COUNT',
+'PRODUCT_PAGE_COLOR_COUNT',
+'MAX_SKU_PRICE',
+'MAX_SKU_PERCENT_OFF',
+'MIN_SKU_PERCENT_OFF',
+'TOTAL_SKU_COUNT',
+'SALE_SKU_COUNT',
+'CLEARANCE_SKU_COUNT',
+'SUPER_CLEARANCE_SKU_COUNT',
+'REGULAR_SKU_COUNT',
+'REVIEW_COUNT',
+'REVIEW_SCORE',
+'SESSIONS_VIEWED_60',
+'SESSIONS_CONV_10',
+'price_ratio_to_shop',
+'price_ratio_to_dept',
+'price_ratio_to_class',
+'size_percent')])
+
+## TOTAL_SKU_COUNT x PRODUCT_PAGE_SIZE_COUNT
+## REGULAR_SKU_COUNT x PRODUCT_PAGE_SIZE_COUNT
+## TOTAL_SKU_COUNT x PRODUCT_PAGE_COLOR_COUNT
+## price_ratio_to_shop x MAX_SKU_PRICE
+## TOTAL_SKU_COUNT x REGULAR_SKU_COUNT
+## price_ratio_to_dept x price_ratio_to_class
+
+#DROP: TOTAL_SKU_COUNT, MAX_SKU_PRICE, price_ratio_to_dept
+
+```
+
+```{r Navigation Category Segments}
+#Focus on:
+#Camp and Hike, Cycle, Men, Women, Footwear
+footwear_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Footwear / .+ Footwear /"),]
+footwear_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Footwear / .+ Footwear /"),]
+
+socks_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Footwear / Socks"),]
+socks_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Footwear / Socks"),]
+
+
+camp_elec_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Camping and Hiking / Camp Electronics"),]
+camp_elec_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Camping and Hiking / Camp Electronics"),]
+
+backpacks_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Camping and Hiking / Hiking Backpacks"),]
+backpacks_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Camping and Hiking / Hiking Backpacks"),]
+
+tents_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Camping and Hiking / Tents"),]
+tents_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Camping and Hiking / Tents"),]
+
+
+cycle_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Cycling"),]
+cycle_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Cycling"),]
+
+cycle_cloth_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Cycling / Cycling Clothing"),]
+cycle_cloth_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Cycling / Cycling Clothing"),]
+
+bikes_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Products / Cycling / Bikes"),]
+bikes_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Products / Cycling / Bikes"),]
+
+women_access_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Women's" & data_clean_p$`Navigation Categories` %like% "Accessories"),]
+women_access_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Women's" & data_clean_i$`Navigation Categories` %like% "Accessories"),]
+women_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Women's"),]
+women_p=women_p[-which(women_p$`Navigation Categories` %like% "Accessories"),]
+women_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Women's"),]
+women_i=women_i[-which(women_i$`Navigation Categories` %like% "Accessories"),]
+
+men_access_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Men's" & data_clean_p$`Navigation Categories` %like% "Accessories"),]
+men_access_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Men's" & data_clean_i$`Navigation Categories` %like% "Accessories"),]
+men_p=data_clean_p[which(data_clean_p$`Navigation Categories` %like% "Men's"),]
+men_p=men_p[-which(men_p$`Navigation Categories` %like% "Accessories"),]
+
+men_i=data_clean_i[which(data_clean_i$`Navigation Categories` %like% "Men's"),]
+men_i=men_i[-which(men_i$`Navigation Categories` %like% "Accessories"),]
+
+
+
+```
+
+
+```{r SETUP: Vars List}
+vars=c("SIZE_COUNT",
+  "SIZE_COUNT_180",
+  "size_percent",
+  "PRICE_BAND",
+  "DISTRICT_NAME",
+  "STATE_NAME",
+  "STORES_WITHIN_30MINS",
+  "STORES_WITHIN_60MINS",
+  "STORES_WITHIN_30MINS",
+  "STORES_WITHIN_60MINS",
+  "PURCHASE_FLAG",
+  "ATC_FLAG",
+  "INTERACTION_FLAG",
+  "EVENT_FLAG",
+  "ORIGINATION_MARKETING_PROGRAM_ROLLUP",
+  "PRODUCT_PAGE_SIZE_COUNT",
+  "PRODUCT_PAGE_COLOR_COUNT",
+  "BRAND_CAT",
+  "SEARCH_ENTRY_FLAG",
+  "FISCAL_DAY_NAME",
+  "WEEKDAY",
+  "MAX_SKU_PERCENT_OFF",
+  "MIN_SKU_PERCENT_OFF",
+  "SALE_SKU_COUNT",
+  "CLEARANCE_SKU_COUNT",
+  "SUPER_CLEARANCE_SKU_COUNT",
+  "TOTAL_SKU_COUNT",
+  "REGULAR_SKU_COUNT",
+  "REVIEW_COUNT",
+  "REVIEW_SCORE",
+  "GENDER",
+  "USA_FLAG",
+  "CHINA_FLAG",
+  "AGE_CATEGORY",
+  "SHOP_DESC",
+  "DEPARTMENT_DESC",
+  "CLASS_DESC",
+  "SESSIONS_VIEWED_60",
+  "SESSIONS_CONV_10",
+  "SESSIONS_VIEWED_30",
+  "SESSIONS_CONV_30",
+  "SESSIONS_VIEWED_10",
+  "SESSIONS_CONV_60",
+  "MAX_SKU_PRICE",
+  "SHOP_PRICE_AVG",
+  "DEPT_PRICE_AVG",
+  "CLASS_PRICE_AVG",
+  "AVG_DEPT_SKU_COUNT",
+  "AVG_CLASS_SKU_COUNT",
+  "AVG_DEPT_SKU_COUNT",
+  "AVG_CLASS_SKU_COUNT",
+  "sku_ratio_to_dept",
+  "sku_ratio_to_class",
+  "price_ratio_to_shop",
+  "price_ratio_to_class",
+  "price_ratio_to_dept",
+  "SIZE_COMPLETENESS_LEVEL",
+  "STORE_FLAG",
+  "RR_FLAG",
+  "ON_SALE_FLAG",
+  "DEVICE_TYPE"
+)
+
+
+vars1= c("size_percent",
+  "DISTRICT_NAME",
+  "EVENT_FLAG",
+  "ORIGINATION_MARKETING_PROGRAM_ROLLUP",
+  "PRODUCT_PAGE_SIZE_COUNT",
+  "PRODUCT_PAGE_COLOR_COUNT",
+  "BRAND_CAT",
+  "WEEKDAY",
+  "REVIEW_COUNT",
+  "REVIEW_SCORE",
+  "GENDER",
+  "USA_FLAG",
+  "CHINA_FLAG",
+  "AGE_CATEGORY",
+  "SESSIONS_VIEWED_60",
+  "SESSIONS_CONV_60",
+  "sku_ratio_to_class",
+  "price_ratio_to_class",
+  "ON_SALE_FLAG",
+  "DEVICE_TYPE"
+)
+
+#balanced_p_split=split(seed=123, data=data_balanced_p, train=.7)
+#balanced_i_split=split(seed=123, data=data_balanced_i, train=.7)
+#balanced_a_split=split(seed=123, data=data_balanced_a, train=.7)
+output_p1=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars1, test=balanced_p_split$test, seed=284, num.trees=70)
+output_a1=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars1, test=balanced_a_split$test, seed=284, num.trees=70)
+output_i1=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars1, test=balanced_i_split$test, seed=284, num.trees=70)
+output_p1
+output_a1
+output_i1
+
+
+varsi= c("SESSIONS_VIEWED_60",
+  "DISTRICT_NAME",
+  "sku_ratio_to_class",  
+  "REVIEW_COUNT",
+  "REVIEW_SCORE",
+  "BRAND_CAT",
+  "WEEKDAY",
+  "DEVICE_TYPE",
+  "EVENT_FLAG"
+)
+output_i2=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=varsi, test=balanced_i_split$test, seed=284, num.trees=70)
+
+output_i2
+
+varsp= c("SESSIONS_CONV_60",
+  "DISTRICT_NAME",
+  "sku_ratio_to_class",  
+  "REVIEW_COUNT",
+  "REVIEW_SCORE",
+  "WEEKDAY",
+  "EVENT_FLAG",
+  "DEVICE_TYPE"
+)
+output_p3=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=varsp, test=balanced_p_split$test, seed=284, num.trees=70)
+output_a3=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=varsp, test=balanced_a_split$test, seed=284, num.trees=70)
+
+output_p3
+output_a3
+
+vars4= c("SESSIONS_CONV_60",
+  "DISTRICT_NAME",
+  "sku_ratio_to_class",  
+  "BRAND_CAT",
+  "ORIGINATION_MARKETING_PROGRAM_ROLLUP",
+  "WEEKDAY",
+  "GENDER",
+  "DEVICE_TYPE"
+)
+output_p4=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars4, test=balanced_p_split$test, seed=284, num.trees=70)
+output_a4=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars4, test=balanced_a_split$test, seed=284, num.trees=70)
+output_i4=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars4, test=balanced_i_split$test, seed=284, num.trees=70)
+output_p4
+output_a4
+output_i4
+
+vars5=c("SESSIONS_CONV_60",
+  "DISTRICT_NAME",
+  "sku_ratio_to_class",  
+  "AGE_CATEGORY",
+  "ORIGINATION_MARKETING_PROGRAM_ROLLUP",
+  "WEEKDAY",
+  "GENDER",
+  "DEVICE_TYPE")
+output_p5=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars5, test=balanced_p_split$test, seed=284, num.trees=70)
+output_a5=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars5, test=balanced_a_split$test, seed=284, num.trees=70)
+output_i5=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars5, test=balanced_i_split$test, seed=284, num.trees=70)
+output_p5
+output_a5
+output_i5
+
+
+y=c('PURCHASE_FLAG', 'ATC_FLAG', 'INTERACTION_FLAG')
+
+```
+
+
+```{r EXPLORATORY: Overall Variable Importance}
+####### RUN FIRST #######
+########################
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+#3 SETUP: RF Functions
+
+require('ranger')
+require("dplyr")
+
+
+####### PURCHASE ########
+#########################
+
+#Split Data
+balanced_p_split=split(seed=123, data=data_balanced_p, train=.7)
+  
+output_p3=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars3, test=balanced_p_split$test, seed=284, num.trees=70)
+
+output_p4=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars4, test=balanced_p_split$test, seed=284, num.trees=70)
+
+output_p1=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars1, test=balanced_p_split$test, seed=284, num.trees=70)
+
+output_p2=rf_function(label="p", y="PURCHASE_FLAG", data=balanced_p_split$train, vars=vars2, test=balanced_p_split$test, seed=284, num.trees=70)
+
+write.csv(output_p3,"output_p3.csv")
+write.csv(output_p1,"output_p1.csv")
+write.csv(output_p2,"output_p2.csv")
+write.csv(output_p4,"output_p4.csv")
+
+
+####### ATC ########
+####################
+balanced_a_split=split(seed=123, data=data_balanced_a, train=.7)
+  
+output_a3=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars3, test=balanced_a_split$test, seed=284, num.trees=70)
+
+output_a4=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars4, test=balanced_a_split$test, seed=284, num.trees=70)
+
+output_a1=rf_function(label="a", y="ATC_FLAG", data=balanced_a_split$train, vars=vars1, test=balanced_a_split$test, seed=284, num.trees=70)
+
+output_a2=rf_function(label="a", y="ACT_FLAG", data=balanced_a_split$train, vars=vars2, test=balanced_a_split$test, seed=284, num.trees=70)
+
+write.csv(output_a3,"output_a3.csv")
+write.csv(output_a1,"output_a1.csv")
+write.csv(output_a2,"output_a2.csv")
+write.csv(output_a4,"output_a4.csv")
+
+####### INTERACTION #####
+#########################
+TO_REMOVE=c("STORE_FLAG")
+balanced_i_split=split(seed=123, data=data_balanced_i, train=.7)
+  
+output_i1=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars1[which(vars1!=TO_REMOVE)], test=balanced_i_split$test, seed=284, num.trees=70)
+
+output_i2=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars2[which(vars2!=TO_REMOVE)], test=balanced_i_split$test, seed=284, num.trees=70)
+
+output_i3=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars3[which(vars3!=TO_REMOVE)], test=balanced_i_split$test, seed=284, num.trees=70)
+
+output_i4=rf_function(label="i", y="INTERACTION_FLAG", data=balanced_i_split$train, vars=vars4[which(vars4!=TO_REMOVE)], test=balanced_i_split$test, seed=284, num.trees=70)
+
+write.csv(output_i1,"output_i1.csv")
+write.csv(output_i2,"output_i2.csv")
+write.csv(output_i3,"output_i3.csv")
+write.csv(output_i4,"output_i4.csv")
+
+
+```
+
+```{r Market Basket Analysis}
+####### RUN FIRST #######
+########################
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+
+data_mba=reformat_mba(total=data)
+TO_ADD=c("FISCAL_DAY_NAME","WEEKDAY_P")
+TO_REMOVE=c("PRODUCT_PAGE_SIZE_COUNT","PRODUCT_PAGE_COLOR_COUNT","MAX_SKU_PERCENT_OFF","MIN_SKU_PERCENT_OFF","SALE_SKU_COUNT","CLEARANCE_SKU_COUNT","SUPER_CLEARANCE_SKU_COUNT","REGULAR_SKU_COUNT","REVIEW_COUNT","REVIEW_SCORE","USA_FLAG","CHINA_FLAG","DEPARTMENT_DESC","SESSIONS_VIEWED_60","SESSIONS_CONV_10","price_ratio_to_shop","price_ratio_to_class")
+data_mba_clean=data_mba[,c(y,vars[-which(vars %in% TO_REMOVE)],TO_ADD)]
+
+
+### Balance Data across Success Metrics
+require("ROSE")
+prop.table(table(data_mba_clean$PURCHASE_FLAG))  #not balanced
+prop.table(table(data_mba_clean$ATC_FLAG))  #not balanced
+prop.table(table(data_mba_clean$INTERACTION_FLAG))  #not balanced
+
+#Under and Over Sampling
+data_balanced=ovun.sample(INTERACTION_FLAG ~ ., data = data_mba_clean, method = "both",seed = 1)$data
+data_balanced=ovun.sample(PURCHASE_FLAG ~ ., data = data_balanced, method = "both",seed = 1)$data
+data_balanced=ovun.sample(ATC_FLAG ~ ., data = data_balanced, method = "both",seed = 1)$data
+data_balanced=ovun.sample(INTERACTION_FLAG ~ ., data = data_balanced, method = "both",seed = 1)$data
+
+prop.table(table(data_balanced$PURCHASE_FLAG))  #not balanced
+prop.table(table(data_balanced$ATC_FLAG))  #not balanced
+prop.table(table(data_balanced$INTERACTION_FLAG))  #not balanced
+
+data_mba=data_balanced
+save(data_mba,file="Data_MBA.RData")
+
+######## MBA ######
+###################
+require("arules")
+explore_mba=as(data_mba,"transactions")
+
+summary(explore_mba)
+
+rules=apriori(explore_mba, parameter=list(supp=0.001,conf=0.6,minlen=1,maxlen=4))
+inspect(head(rules,n=10))
+
+write(rules,
+      file = "MBA_Rules.csv",
+      sep = ",",
+      quote = TRUE,
+      row.names = FALSE)
+
+##Subsetting
+rules.sub_DAY=sort(subset(rules, subset = (rhs %pin% c("WEEKDAY_P=") & !(lhs %pin% "FISCAL_DAY_NAME") )),by=c("confidence","lift","support"))
+inspect(head(rules.sub_DAY,n=20))
+
+
+
+```
+
+```{r Random Forest - PURCHASE}
+####### RUN FIRST #######
+########################
+#0 Connect to Server
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+#3 SETUP: RF Functions
+
+
+###### First Iteration #######
+##############################
+
+TO_REMOVE=c("EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS")
+
+#### Segments
+device=c("DESKTOP","MOBILE")
+event=c(0,1)
+col_names=c("device","event")
+purchase_seg=expand.grid(device,event)
+purchase_seg=output_table_setup(data=purchase_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+
+###### RUN MODEL
+for(i in 1:nrow(purchase_seg)){
+  Device=purchase_seg$device[i]
+  Event=purchase_seg$event[i]
+  
+  # query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE DISTRICT_NAME='",District,"' AND ORIGINATION_MARKETING_PROGRAM_ROLLUP='",Marketing,"' AND trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event)
+  
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," ORDER BY RANDOM() LIMIT 3000000")
+  
+  ###Pull data from database
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data$geo_group=geo_group(data=data)
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=10, success="PURCHASE_FLAG")
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="p", y="PURCHASE_FLAG", data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=937, num.trees=70)
+  save(output,file=paste0("RFbalanced-output-P",i,".RData"))
+  
+  
+  for(j in (length(col_names)+1):ncol(purchase_seg)){
+    if(j==(length(col_names)+1)){
+      purchase_seg[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        purchase_seg[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(purchase_seg)[j]
+      purchase_seg[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  save(purchase_seg, file="RF_balanced_2seg_P.RData")
+  
+}
+
+save(purchase_seg, file="RF_balanced_2seg_P.RData"
+     
+     
+     
+     
+
+###### Second Iteration #######
+##############################
+TO_REMOVE=c("EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS")
+
+#### Segments
+device=c("DESKTOP","MOBILE")
+event=c(0)
+marketing="NULL"
+geo="NULL"
+dept="NULL"
+
+col_names=c("device","event","marketing","geo","dept")
+
+purchase_seg=expand.grid(device,event,marketing,geo,dept)
+purchase_seg=output_table_setup(data=purchase_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+###### RUN MODEL
+run_model=function(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70){
+  
+  total_list=list()
+for(i in 1:nrow(segment)){
+  Device=segment$device[i]
+  Event=segment$event[i]
+  Marketing=segment$marketing[i]
+  Geo=segment$geo[i]
+  Dept=segment$dept[i]
+  
+  ###Pull data from database
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," LIMIT 3000000")
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=seed, success=success)
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="-", y=success, data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=seed, num.trees=trees)
+  
+  for(j in (length(col_names)+1):ncol(segment)){
+    if(j==(length(col_names)+1)){
+      segment[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        segment[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(segment)[j]
+      segment[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  
+}
+  total_list$segment=segment
+  return(total_list)
+  
+}
+model_p_1=run_model(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70)
+
+
+##########################################
+TO_REMOVE=c("EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS","ORIGINATION_MARKETING_PROGRAM_ROLLUP","DEPARTMENT_DESC")
+
+device=c("DESKTOP","MOBILE")
+event=c(0,1)
+marketing=c("Direct Load","Email","Online Marketing","Organic Search")
+
+
+col_names=c("device","event","marketing")
+
+purchase_seg=expand.grid(device,event,marketing)
+purchase_seg=output_table_setup(data=purchase_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+###### RUN MODEL
+run_model=function(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70){
+  
+  total_list=list()
+for(i in 1:nrow(segment)){
+  Device=segment$device[i]
+  Event=segment$event[i]
+  Marketing=segment$marketing[i]
+  
+  ###Pull data from database
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," AND ORIGINATION_MARKETING_PROGRAM_ROLLUP='",Marketing,"' LIMIT 3000000")
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=seed, success=success)
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="-", y=success, data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=seed, num.trees=trees)
+  
+  for(j in (length(col_names)+1):ncol(segment)){
+    if(j==(length(col_names)+1)){
+      segment[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        segment[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(segment)[j]
+      segment[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  
+}
+  total_list$segment=segment
+  return(total_list)
+  
+}
+model_p_2=run_model(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70)
+
+
+###############################
+TO_REMOVE=c("EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS","ORIGINATION_MARKETING_PROGRAM_ROLLUP","GEO_CODE")
+
+device=c("MOBILE")
+event=c(1)
+marketing=c("Direct Load","Email","Online Marketing","Organic Search")
+geo=c(1,2,3,4,5)
+dept="NULL"
+
+col_names=c("device","event","marketing","geo","dept")
+
+purchase_seg=expand.grid(device,event,marketing,geo,dept)
+purchase_seg=output_table_setup(data=purchase_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+###### RUN MODEL
+run_model=function(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70){
+  
+  total_list=list()
+for(i in 1:nrow(segment)){
+  Device=segment$device[i]
+  Event=segment$event[i]
+  Marketing=segment$marketing[i]
+  Geo=segment$geo[i]
+  Dept=segment$dept[i]
+  
+  ###Pull data from database
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," AND ORIGINATION_MARKETING_PROGRAM_ROLLUP='",Marketing,"' AND GEO_CODE=",Geo," LIMIT 3000000")
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=seed, success=success)
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="-", y=success, data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=seed, num.trees=trees)
+  
+  for(j in (length(col_names)+1):ncol(segment)){
+    if(j==(length(col_names)+1)){
+      segment[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        segment[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(segment)[j]
+      segment[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  
+}
+  total_list$segment=segment
+  return(total_list)
+  
+}
+model_p_3=run_model(segment=purchase_seg, vars=vars, TO_REMOVE=TO_REMOVE, success="PURCHASE_FLAG", seed=707, trees=70)
+
+
+
+######## Cobble Together Results #######
+########################################
+m1_p=model_p_1$segment
+m2_p=model_p_2$segment
+m3_p=model_p_3$segment
+save(m1_p,file="RF_Purchase_2iter_1.RData")
+save(m2_p,file="RF_Purchase_2iter_2.RData")
+save(m3_p,file="RF_Purchase_2iter_3.RData")
+write.csv(m1_p,"RF_m1_p.csv")
+write.csv(m2_p,"RF_m2_p.csv")
+write.csv(m3_p,"RF_m3_p.csv")
+
+
+
+```
+
+```{r Random Forest - ATC}
+
+####### RUN FIRST #######
+########################
+#0 Connect to Server
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+#3 SETUP: RF Functions
+
+
+###### First Iteration #######
+##############################
+
+TO_REMOVE=c("EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS")
+
+#### Segments
+device=c("DESKTOP","MOBILE")
+event=c(0,1)
+col_names=c("device","event")
+atc_seg=expand.grid(device,event)
+atc_seg=output_table_setup(data=atc_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+
+###### RUN MODEL
+for(i in 1:nrow(atc_seg)){
+  Device=atc_seg$device[i]
+  Event=atc_seg$event[i]
+  
+  # query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE DISTRICT_NAME='",District,"' AND ORIGINATION_MARKETING_PROGRAM_ROLLUP='",Marketing,"' AND trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event)
+  
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," ORDER BY RANDOM() LIMIT 3000000")
+  
+  ###Pull data from database
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data$geo_group=geo_group(data=data)
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=10, success="ATC_FLAG")
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="a", y="ATC_FLAG", data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=937, num.trees=70)
+  save(output,file=paste0("RFbalanced-output-A",i,".RData"))
+  
+  
+  for(j in (length(col_names)+1):ncol(atc_seg)){
+    if(j==(length(col_names)+1)){
+      atc_seg[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        atc_seg[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(atc_seg)[j]
+      atc_seg[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  save(atc_seg, file="RF_balanced_2seg_A.RData")
+  
+}
+
+save(atc_seg, file="RF_balanced_2seg_A.RData"
+
+```
+
+```{r RF - Interaction}
+####### RUN FIRST #######
+########################
+#0 Connect to Server
+#1 SETUP: Reformat Functions
+#2 SETUP: Vars List
+#3 SETUP: RF Functions
+
+
+###### First Iteration #######
+##############################
+
+TO_REMOVE=c("STORE_FLAG","EVENT_FLAG","DEVICE_TYPE","STATE_NAME","DISTRICT_NAME","STORES_WITHIN_30MINS","STORES_WITHIN_60MINS")
+
+#### Segments
+device=c("DESKTOP","MOBILE")
+event=c(0,1)
+col_names=c("device","event")
+interaction_seg=expand.grid(device,event)
+interaction_seg=output_table_setup(data=interaction_seg, col_names=col_names, vars=vars[-which(vars %in% TO_REMOVE)])
+
+
+###### RUN MODEL
+for(i in 1:nrow(interaction_seg)){
+  Device=interaction_seg$device[i]
+  Event=interaction_seg$event[i]
+  
+  # query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE DISTRICT_NAME='",District,"' AND ORIGINATION_MARKETING_PROGRAM_ROLLUP='",Marketing,"' AND trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event)
+  
+  query=paste0("SELECT * FROM DIGITAL_RETAIL_ANALYSIS..AK_RESEARCH_DATASET_SPRING_V2 WHERE trim(DEVICE_TYPE)='",Device,"' AND EVENT_FLAG=",Event," ORDER BY RANDOM() LIMIT 3000000")
+  
+  ###Pull data from database
+  data=nzQuery(query)
+  
+  ###Reformat vars
+  data=reformat_rf(data=data)
+  
+  #Add Vars & Balance
+  data$geo_group=geo_group(data=data)
+  data_filter=data[,c(y,vars[-which(vars %in% TO_REMOVE)])]
+  data_na=balanceIt(data=data_filter, seed=10, success="INTERACTION_FLAG")
+  
+  #Split Data
+  total_split=split(seed=123, data=data_na, train=.7)
+  output=rf_function(label="i", y="INTERACTION_FLAG", data=total_split$train, vars=vars[-which(vars %in% TO_REMOVE)], test=total_split$test, seed=937, num.trees=70)
+  save(output,file=paste0("RFbalanced-output-I",i,".RData"))
+  
+  
+  for(j in (length(col_names)+1):ncol(interaction_seg)){
+    if(j==(length(col_names)+1)){
+      interaction_seg[i,j]=nrow(total_split$train)
+    } else if(j==(length(col_names)+2)){
+        interaction_seg[i,j]=output$accuracy[2]
+    } else{
+      column=colnames(interaction_seg)[j]
+      interaction_seg[i,column]=match(column,rownames(output$imp))
+    }
+  }
+  save(interaction_seg, file="RF_balanced_2seg_I.RData")
+  
+}
+
+save(interaction_seg, file="RF_balanced_2seg_I.RData"
+
+```
+
+```{r Cluster}
+###### CLUSTER ######
+#####################
+#all 'Other/Error' marketing had 0% model accuracy; remove from clustering
+
+str(purchase_seg)
+#purchase_seg_filter=purchase_seg[which(purchase_seg$accuracy>0),]
+#Elbow Method
+k.max=15
+sample_p=purchase_seg[,7:ncol(purchase_seg)]
+wss=sapply(1:k.max, 
+           function(k){kmeans(sample_p, k, iter.max = 15)$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+
+#kmeans
+centers=4
+k_model=kmeans(sample_p, centers=centers)
+
+purchase_seg_cluster=data.frame(purchase_seg, cluster=k_model$cluster)
+
+purchase_group1=purchase_seg_cluster[which(purchase_seg_cluster$cluster==1),]
+  summary(purchase_group1)
+  prop.table(table(purchase_group1$district))*100
+  prop.table(table(purchase_group1$weekday))*100
+  prop.table(table(purchase_group1$marketing))*100
+  prop.table(table(purchase_group1$device))*100
+  prop.table(table(purchase_group1$event))*100
+
+purchase_group2=purchase_seg_cluster[which(purchase_seg_cluster$cluster==2),]
+  summary(purchase_group2)
+  prop.table(table(purchase_group2$district))*100
+  prop.table(table(purchase_group2$weekday))*100
+  prop.table(table(purchase_group2$marketing))*100
+  prop.table(table(purchase_group2$device))*100
+  prop.table(table(purchase_group2$event))*100
+  
+purchase_group3=purchase_seg_cluster[which(purchase_seg_cluster$cluster==3),]
+  summary(purchase_group3)
+  prop.table(table(purchase_group3$district))*100
+  prop.table(table(purchase_group3$weekday))*100
+  prop.table(table(purchase_group3$marketing))*100
+  prop.table(table(purchase_group3$device))*100
+  prop.table(table(purchase_group3$event))*100
+
+purchase_group4=purchase_seg_cluster[which(purchase_seg_cluster$cluster==4),]
+  summary(purchase_group4)
+  prop.table(table(purchase_group4$district))*100
+  prop.table(table(purchase_group4$weekday))*100
+  prop.table(table(purchase_group4$marketing))*100
+  prop.table(table(purchase_group4$device))*100
+  prop.table(table(purchase_group4$event))*100
+
+
+#LCA
+#install.packages("poLCA")
+require("poLCA")
+sample_f=as.data.frame(lapply(sample_p, factor))
+
+seg.f=with(sample_f, cbind(PRICE_BAND,PRODUCT_PAGE_SIZE_COUNT,PRODUCT_PAGE_COLOR_COUNT,BRAND_CAT, SEARCH_ENTRY_FLAG,MAX_SKU_PERCENT_OFF,MIN_SKU_PERCENT_OFF,
+SALE_SKU_COUNT,CLEARANCE_SKU_COUNT,SUPER_CLEARANCE_SKU_COUNT,REGULAR_SKU_COUNT,
+REVIEW_COUNT,REVIEW_SCORE,GENDER,USA_FLAG,
+CHINA_FLAG,AGE_CATEGORY,SHOP_DESC,price_ratio_to_shop,
+price_ratio_to_class,size_percent,SIZE_COMPLETENESS_LEVEL,STORE_FLAG,
+ON_SALE_FLAG,SESSIONS_CONV_10,SESSIONS_VIEWED_60)~1)
+
+centers=4
+lca_model=poLCA(seg.f,data=sample_f, nclass=centers)
+
+purchase_seg_lca=data.frame(purchase_seg, cluster=lca_model$predclass)
+
+purchase_group1_lca=purchase_seg_lca[which(purchase_seg_lca$cluster==1),]
+  summary(purchase_group1_lca)
+  prop.table(table(purchase_group1_lca$district))*100
+  prop.table(table(purchase_group1_lca$weekday))*100
+  prop.table(table(purchase_group1_lca$marketing))*100
+  prop.table(table(purchase_group1_lca$device))*100
+  prop.table(table(purchase_group1_lca$event))*100
+
+
+purchase_group2_lca=purchase_seg_lca[which(purchase_seg_lca$cluster==2),]
+  #summary(purchase_group2_lca)
+  prop.table(table(purchase_group2_lca$district))*100
+  prop.table(table(purchase_group2_lca$weekday))*100
+  prop.table(table(purchase_group2_lca$marketing))*100
+  prop.table(table(purchase_group2_lca$device))*100
+  prop.table(table(purchase_group2_lca$event))*100
+  
+purchase_group3_lca=purchase_seg_lca[which(purchase_seg_lca$cluster==3),]
+  #summary(purchase_group3_lca)
+  prop.table(table(purchase_group3_lca$district))*100
+  prop.table(table(purchase_group3_lca$weekday))*100
+  prop.table(table(purchase_group3_lca$marketing))*100
+  prop.table(table(purchase_group3_lca$device))*100
+  prop.table(table(purchase_group3_lca$event))*100
+  
+#purchase_group4_lca=purchase_seg_lca[which(purchase_seg_lca$cluster==4),]
+#summary(purchase_group4_lca)
+
+
+
+
+###### NEW SEGMENTS ######
+##########################
+district2=c("Bay+CalNev+UNKNOWN", "All Others")
+weekday2=c("Monday","Midweek","Friday","Weekend")
+marketing2=c("Email","Direct Load","Online+Organic")
+device2=c("DESKTOP","MOBILE")
+event2=c(0,1)
+
+  
+purchase_seg2=expand.grid(district2,weekday2,marketing2,device2,event2)
+#96 combos
+
+```
+
+```{r RF Tree Interpreter}
+#install.packages("tree.interpreter")
+require("tree.interpreter")
+
+forest=tidyRF(rf_ranger,total_split$train[,vars],total_split$train[,"INTERACTION_FLAG"])
+featureContrib(forest)
+trainsetBias(forest)
+MDIoob(forest, total_split$train[,vars],total_split$train[,"INTERACTION_FLAG"])
+
+```
+
+```{r Var Importance Plot}
+## Plot Importance Vars
+plot(ggplot(imp_ranger_frame[1:20,,drop = FALSE], aes(x=reorder(rownames(imp_ranger_frame[1:20,,drop = FALSE]),imp_ranger[1:20,drop = FALSE]), y=imp_ranger[1:20,drop = FALSE],fill=imp_ranger))+ 
+  geom_bar(stat="identity", position="dodge")+ coord_flip()+
+  ylab("Variable Importance")+
+  xlab("Variables")+
+  ggtitle(paste0(label))+
+  labs(subtitle="Gini Impurity: Mean Decrease")+
+  scale_fill_gradient(low="red", high="blue")
+  )
+```
+
+```{r Tree Plot Code}
+#Tree values
+tree=treeInfo(rf_ranger,1)
+tree=tree%>%
+    tibble::rownames_to_column() %>%
+    mutate(splitval= ifelse(is.na(prediction), splitval, NA))
+graph_frame=data.frame(from = rep(tree$rowname, 2),
+                            to = c(tree$leftChild, tree$rightChild))
+graph=graph_from_data_frame(graph_frame) %>%
+    delete_vertices("NA")
+
+V(graph)$node_label=as.character(tree$splitvarName)
+V(graph)$leaf_label=as.character(tree$prediction)
+V(graph)$split=as.character(round(tree$splitval, digits = 2))
+plot=ggraph(graph, 'dendrogram') + 
+    theme_bw() +
+    geom_edge_link() +
+    geom_node_point() +
+    geom_node_text(aes(label = node_label), na.rm = TRUE, repel = TRUE) +
+    geom_node_label(aes(label = split), vjust = 2.5, na.rm = TRUE, fill = "white") +
+    geom_node_label(aes(label = leaf_label, fill = leaf_label), na.rm = TRUE, 
+					repel = TRUE, colour = "white", fontface = "bold", show.legend = FALSE) +
+    theme(panel.grid.minor = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.background = element_blank(),
+          plot.background = element_rect(fill = "white"),
+          panel.border = element_blank(),
+          axis.line = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          plot.title = element_text(size = 18))
+  
+  print(plot)
+
+
+```
+
+```{r Gradient Boost}
+#model 1: Method 1
+  #https://cran.r-project.org/web/packages/h2o/h2o.pdf
+  #http://docs.h2o.ai/h2o/latest-stable/h2o-docs/performance-and-prediction.html#logloss
+  #localH2O = h2o.init()
+  #training_frame' must be a valid H2OFrame
+
+#FUNCTION
+require("h2o")
+gradient=function(data=data, target="PURCHASE_FLAG", vars=varsp, seed=seed){
+list=list()
+X=2:length(vars)
+y=1
+seed = seed
+
+ntrees_opts = seq(100, 500, 50)
+max_depth_opts = seq(2, 20, 2)
+sample_rate_opts = seq(0.1, 0.9, 0.1)
+col_sample_rate_opts = seq(0.1, 0.9, 0.1)
+
+hyper_params = list(
+  ntrees = ntrees_opts,
+  max_depth = max_depth_opts,
+  sample_rate = sample_rate_opts,
+  col_sample_rate = col_sample_rate_opts
+  )
+
+search_criteria = list(
+        strategy = "RandomDiscrete",
+        max_runtime_secs = 300,
+        max_models = 75,
+        stopping_metric = "AUC",
+        stopping_tolerance = 0.0001,
+        stopping_rounds = 5,
+        seed = seed
+        )
+
+h2o.init()
+data_f=data[,c(target,vars)]
+data_h=as.h2o(data_f)
+  
+  splits=h2o.splitFrame(
+  data_h,           ##  splitting the H2O frame we read above
+  c(0.6,0.2),   ##  create splits of 60% and 20%; 
+                ##  H2O will create one more split of 1-(sum of these parameters)
+                ##  so we will get 0.6 / 0.2 / 1 - (0.6+0.2) = 0.6/0.2/0.2
+  seed=seed)    ##  setting a seed will ensure reproducible results (not R's seed)
+
+  train2=h2o.assign(splits[[1]], "train.hex")   
+                ## assign the first result the R variable train
+                ## and the H2O name train.hex
+  valid2=h2o.assign(splits[[2]], "valid.hex")   ## R valid, H2O valid.hex
+  test2=h2o.assign(splits[[3]], "test.hex")     ## R test, H2O test.hex
+  
+  #GB
+  loan_gbm=h2o.grid(
+        "xgboost",
+        grid_id = "gbm_grid",
+        x = 2:ncol(train2),
+        y = 1,
+        training_frame = train2,
+        validation_frame = valid2,
+        
+        # per model stopping criteria
+        stopping_rounds = 2,
+        stopping_tolerance = 1e-3,
+        stopping_metric = "AUC",
+        
+        # how often to score (affects early stopping, training speed)
+        score_tree_interval = 5,
+        
+        # seed to control sampling
+        seed = seed,
+        # grid serach options
+        hyper_params = hyper_params,
+        search_criteria = search_criteria
+        )
+  
+  sorted_grid=h2o.getGrid(grid_id = "gbm_grid")
+
+  # select best model
+  best_model =h2o.getModel(sorted_grid@model_ids[[1]])
+  list$nrow=nrow(data_f)
+  list$model=best_model
+  list$valid=h2o.assign(splits[[2]], "valid.hex")
+  return(list)
+  h2o.shutdown(prompt = FALSE)
+
+}
+
+#VARS for PURCHASE
+varsp=c("SESSIONS_CONV_60","sku_ratio_to_class","review_count_group","REVIEW_COUNT","REVIEW_SCORE","DEVICE_TYPE","EVENT_FLAG","ON_SALE_FLAG","DISTRICT_NAME","BRAND_CAT","GENDER","USA_FLAG","CHINA_FLAG","STORE_FLAG","AGE_CATEGORY","SEASON","ON_SALE_FLAG")
+
+varsi=c("SESSIONS_VIEWED_60","sku_ratio_to_class","price_ratio_to_class","REVIEW_COUNT","REVIEW_SCORE","DEVICE_TYPE","EVENT_FLAG","AGE_CATEGORY","DISTRICT_NAME","BRAND_CAT","GENDER","USA_FLAG","CHINA_FLAG","ON_SALE_FLAG")
+
+
+#RUN MODEL FUNCTION
+best_model_tents_a=gradient(data=tents_balanced_a, target="ATC_FLAG", vars=varsp, seed=8136)
+save(best_model_tents_a, file="best_model_tents_a.RData")
+h2o.shutdown(prompt = FALSE)
+
+best_model_womens_a=gradient(data=womens_balanced_a, target="ATC_FLAG", vars=varsp, seed=8136)
+save(best_model_womens_a, file="best_model_womens_a.RData")
+h2o.shutdown(prompt = FALSE)
+
+best_model_footwear_a=gradient(data=footwear_balanced_a, target="ATC_FLAG", vars=varsp, seed=8136)
+save(best_model_footwear_a, file="best_model_footwear_a.RData")
+h2o.shutdown(prompt = FALSE)
+
+best_model_mens_a=gradient(data=mens_balanced_a, target="ATC_FLAG", vars=varsp, seed=8136)
+save(best_model_mens_a, file="best_model_mens_a.RData")
+h2o.shutdown(prompt = FALSE)
+
+#imp=h2o.varimp(best_model)
+#h2o.partialPlot(best_model_boots_p_v2$model, as.h2o(best_model_boots_p_v2$valid), "sku_ratio_to_class")
+
+#VARS for INTERACTION
+varsi=c("SESSIONS_VIEWED_60","sku_ratio_to_class","price_ratio_to_class","REVIEW_COUNT","REVIEW_SCORE","DEVICE_TYPE","EVENT_FLAG","AGE_CATEGORY","DISTRICT_NAME","BRAND_CAT","GENDER","USA_FLAG","CHINA_FLAG","ON_SALE_FLAG")
+  
+
+
+  
+###########################################################
+    
+  imp=imp[1:20,]
+  save(imp,file = paste0(label,"_gbImportance.RData"))
+  
+  h2o.varimp_plot(best_model, num_of_features = 20)+ title(xlab=paste0(label,"_gbImportance"))
+  
+  h2o.partialPlot(best_model, valid2, "SESSIONS_VIEWED_60")+ title(main="SESSIONS_VIEWED_60")
+h2o.partialPlot(best_model, valid2, "sku_ratio_to_class")+ title(main="price_ratio_to_dept")
+h2o.partialPlot(best_model, valid2, "REVIEW_COUNT")+ title(main="REVIEW_COUNT")
+h2o.partialPlot(best_model, valid2, "DEVICE_TYPE")+ title(main="DEVICE_TYPE")
+h2o.partialPlot(best_model, valid2, "REVIEW_SCORE")+ title(main="TOTAL_SKU_COUNT")
+
+h2o.partialPlot(best_model, valid2, "PRODUCT_PAGE_COLOR_COUNT")+ title(main="PRODUCT_PAGE_COLOR_COUNT")
+h2o.partialPlot(best_model, valid2, "PRODUCT_PAGE_SIZE_COUNT")+ title(main="PRODUCT_PAGE_SIZE_COUNT")
+h2o.partialPlot(best_model, valid2, "price_ratio_to_class")+ title(main="price_ratio_to_class")
+
+  
+  top_five=imp[1:5,"variable"]
+  tryCatch({h2o.partialPlot(best_model, valid2, top_five[1])+ title(main=paste0(label,"_gbImportance")) }, warning = function() {w}, error = function(e) {})
+  tryCatch({h2o.partialPlot(best_model, valid2, top_five[2])+ title(main=paste0(label,"_gbImportance")) }, warning = function(w) {}, error = function(e) {})
+  
+  tryCatch({h2o.partialPlot(best_model, valid2, top_five[3])+ title(main=paste0(label,"_gbImportance")) }, warning = function(w) {}, error = function(e) {})
+  
+  tryCatch({h2o.partialPlot(best_model, valid2, top_five[4])+ title(main=paste0(label,"_gbImportance")) }, warning = function(w) {}, error = function(e) {})
+  
+  tryCatch({h2o.partialPlot(best_model, valid2, top_five[5])+ title(main=paste0(label,"_gbImportance")) }, warning = function(w) {}, error = function(e) {})
+
+  h2o.shutdown(prompt = FALSE)
+
+
+# A perfect classifier has AUC = 1 and a completely random classifier has AUC = 0.5 (evaluate how well a binary classification model is able to distinguish between true positives and false positives)
+# A Gini index of zero expresses perfect equality (or a totally useless classifier)
+# Logloss can be any value greater than or equal to 0, with 0 meaning that the model correctly assigns a probability of 0% or 100%.
+# MSE (average of the squares of the errors or deviations) - the lower the MSE the higher the accuracy of prediction
+# RMSE sensitive to outliers
+
+```
+
+#################################################################################################
+BACKUP:
+
+
+
+
+
+##########################################################################
+X=2:length(varsp)
+y=1
+seed = 932675
+
+#labelsp=c("boots_balanced_p","camp_balanced_p","cycle_balanced_p","men_balanced_p","women_balanced_p")
+#labelsi=c("boots_balanced_i","camp_balanced_i","cycle_balanced_i","men_balanced_i","women_balanced_i")
+
+#load("~/Research/Results on Nav/men_balanced_i.RData")
+# define random grid search parameters
+ntrees_opts = seq(100, 500, 50)
+max_depth_opts = seq(2, 20, 2)
+sample_rate_opts = seq(0.1, 0.9, 0.1)
+col_sample_rate_opts = seq(0.1, 0.9, 0.1)
+
+hyper_params = list(
+  ntrees = ntrees_opts,
+  max_depth = max_depth_opts,
+  sample_rate = sample_rate_opts,
+  col_sample_rate = col_sample_rate_opts
+  )
+
+# search a random subset of these hyper-parmameters
+# max runtime and max models are enforced
+# and the search will stop after not improving much over the best 5 random models
+search_criteria = list(
+        strategy = "RandomDiscrete",
+        max_runtime_secs = 300,
+        max_models = 75,
+        stopping_metric = "AUC",
+        stopping_tolerance = 0.0001,
+        stopping_rounds = 5,
+        seed = seed
+        )
+require("h2o")
+## Run models
+#for(i in 2:10){
+  h2o.init()
+  #label=labelsp[i]
+  #load(paste0("~/Research/Results on Nav/",label,".RData")
+       
+  data=data_balanced_p[,c("PURCHASE_FLAG",varsp)]
+  data=as.h2o(data)
+  
+  splits=h2o.splitFrame(
+  data,           ##  splitting the H2O frame we read above
+  c(0.6,0.2),   ##  create splits of 60% and 20%; 
+                ##  H2O will create one more split of 1-(sum of these parameters)
+                ##  so we will get 0.6 / 0.2 / 1 - (0.6+0.2) = 0.6/0.2/0.2
+  seed=seed)    ##  setting a seed will ensure reproducible results (not R's seed)
+
+  train2=h2o.assign(splits[[1]], "train.hex")   
+                ## assign the first result the R variable train
+                ## and the H2O name train.hex
+  valid2=h2o.assign(splits[[2]], "valid.hex")   ## R valid, H2O valid.hex
+  test2=h2o.assign(splits[[3]], "test.hex")     ## R test, H2O test.hex
+  
+  #GB
+  loan_gbm=h2o.grid(
+        "xgboost",
+        grid_id = "gbm_grid",
+        x = 2:ncol(train2),
+        y = 1,
+        training_frame = train2,
+        validation_frame = valid2,
+        
+        # per model stopping criteria
+        stopping_rounds = 2,
+        stopping_tolerance = 1e-3,
+        stopping_metric = "AUC",
+        
+        # how often to score (affects early stopping, training speed)
+        score_tree_interval = 5,
+        
+        # seed to control sampling
+        seed = seed,
+        # grid serach options
+        hyper_params = hyper_params,
+        search_criteria = search_criteria
+        )
+  
+  sorted_grid=h2o.getGrid(grid_id = "gbm_grid")
+
+  # select best model
+  best_model =h2o.getModel(sorted_grid@model_ids[[1]])
+  
+  # use variable importance to get insight into important relationships
+  #imp=h2o.varimp(best_model)
+  h2o.shutdown(prompt = FALSE)
+  
+}  
+
